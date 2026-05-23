@@ -185,6 +185,32 @@ p {
   background: #f8fafc;
 }
 
+.conversation-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.conversation-row {
+  display: grid;
+  justify-content: stretch;
+  width: 100%;
+  min-height: 58px;
+  color: #1d2329;
+  text-align: left;
+}
+
+.conversation-row strong,
+.conversation-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-row span {
+  color: #66737f;
+  font-size: 12px;
+}
+
 .conversation-row.active,
 .memory-row.active {
   border-color: #6b8fb2;
@@ -355,6 +381,15 @@ pre {
 }
 
 .icon-text-button {
+  background: #f8fafc;
+  color: #2b343d;
+  border-color: #c8d0d8;
+}
+
+.icon-button {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
   background: #f8fafc;
   color: #2b343d;
   border-color: #c8d0d8;

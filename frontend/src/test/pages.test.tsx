@@ -36,7 +36,44 @@ vi.mock("../services/api", () => ({
   scanVault: vi.fn(async () => ({ scanned_files: 1, indexed_notes: 1, skipped_files: 0 })),
   rebuildIndex: vi.fn(async () => ({ indexed_chunks: 1 })),
   listMemories: vi.fn(async () => ({ memories: [sampleMemory] })),
+  listConversations: vi.fn(async () => ({
+    conversations: [
+      {
+        id: "conv_saved",
+        title: "Project planning",
+        created_at: "2026-05-23T10:00:00",
+        updated_at: "2026-05-23T10:01:00",
+        message_count: 2,
+      },
+    ],
+  })),
+  createConversation: vi.fn(async () => ({
+    id: "conv_new",
+    title: "New conversation",
+    created_at: "2026-05-23T10:02:00",
+    updated_at: "2026-05-23T10:02:00",
+    message_count: 0,
+  })),
+  getConversationMessages: vi.fn(async () => ({
+    messages: [
+      {
+        id: "msg_1",
+        conversation_id: "conv_saved",
+        role: "user",
+        content: "之前讨论过 LuminaMind",
+        created_at: "2026-05-23T10:00:00",
+      },
+      {
+        id: "msg_2",
+        conversation_id: "conv_saved",
+        role: "assistant",
+        content: "是的，之前讨论过 Markdown 记忆。",
+        created_at: "2026-05-23T10:01:00",
+      },
+    ],
+  })),
   sendChat: vi.fn(async () => ({
+    conversation_id: "conv_saved",
     answer: "第一版先完成 Markdown 记忆库和混合检索闭环。",
     used_memories: [{ memory_id: "mem_1", title: "LuminaMind 技术路线", score: 0.91 }],
   })),
@@ -94,6 +131,21 @@ describe("LuminaMind MVP frontend", () => {
 
     expect(await screen.findByText("第一版先完成 Markdown 记忆库和混合检索闭环。")).toBeInTheDocument();
     expect(screen.getByText("LuminaMind 技术路线")).toBeInTheDocument();
+  });
+
+  it("loads saved conversations and can start a new chat", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("Project planning")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Project planning" }));
+
+    expect(await screen.findByText("之前讨论过 LuminaMind")).toBeInTheDocument();
+    expect(screen.getByText("是的，之前讨论过 Markdown 记忆。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => expect(api.createConversation).toHaveBeenCalled());
+    expect(screen.queryByText("之前讨论过 LuminaMind")).not.toBeInTheDocument();
   });
 
   it("reviews and accepts pending memory suggestions", async () => {

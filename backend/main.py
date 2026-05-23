@@ -6,13 +6,22 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from lumina.config import AppSettings
-from lumina.conversations import add_message, ensure_conversation
+from lumina.conversations import (
+    add_message,
+    create_conversation,
+    ensure_conversation,
+    get_conversation,
+    list_conversations,
+    load_chat_messages,
+    load_messages,
+)
 from lumina.indexer import index_status, rebuild_index
 from lumina.llm import generate_answer
 from lumina.memory.store import create_memory, delete_memory, get_memory, list_memories, scan_vault, update_memory
 from lumina.models import (
     ChatRequest,
     ChatResponse,
+    ConversationCreate,
     GenerateSuggestionsRequest,
     MemoryCreate,
     MemoryUpdate,
@@ -178,13 +187,35 @@ def api_retrieve(payload: RetrievalRequest) -> dict:
     return {"results": [result.model_dump() for result in results]}
 
 
+@app.get("/api/conversations")
+def api_list_conversations() -> dict:
+    return {"conversations": [conversation.model_dump() for conversation in list_conversations(require_vault())]}
+
+
+@app.post("/api/conversations")
+def api_create_conversation(payload: ConversationCreate) -> dict:
+    conversation = create_conversation(require_vault(), payload.title)
+    return conversation.model_dump()
+
+
+@app.get("/api/conversations/{conversation_id}/messages")
+def api_get_conversation_messages(conversation_id: str) -> dict:
+    try:
+        get_conversation(require_vault(), conversation_id)
+        messages = load_chat_messages(require_vault(), conversation_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    return {"messages": [message.model_dump() for message in messages]}
+
+
 @app.post("/api/chat")
 def api_chat(payload: ChatRequest) -> dict:
     vault_root = require_vault()
     conversation_id = ensure_conversation(vault_root, payload.conversation_id, payload.message[:40])
+    conversation_history = load_messages(vault_root, conversation_id, limit=12)
     add_message(vault_root, conversation_id, "user", payload.message)
     memories = retrieve_memories(vault_root, payload.message, settings=AppSettings.load(vault_root))
-    answer = generate_answer(AppSettings.load(vault_root), payload.message, memories)
+    answer = generate_answer(AppSettings.load(vault_root), payload.message, memories, conversation_history)
     add_message(vault_root, conversation_id, "assistant", answer)
     response = ChatResponse(
         conversation_id=conversation_id,
@@ -235,4 +266,3 @@ def api_edit_suggestion(suggestion_id: str, payload: MemoryCreate) -> dict:
         links=payload.links,
     )
     return {"previous": rejected.model_dump(), "memory": created.model_dump()}
-

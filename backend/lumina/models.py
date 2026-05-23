@@ -84,6 +84,26 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class ConversationCreate(BaseModel):
+    title: str = "New conversation"
+
+
+class ConversationSummary(BaseModel):
+    id: str
+    title: str = "Untitled"
+    created_at: str = ""
+    updated_at: str = ""
+    message_count: int = 0
+
+
+class ChatMessage(BaseModel):
+    id: str
+    conversation_id: str
+    role: str
+    content: str
+    created_at: str = ""
+
+
 class UsedMemory(BaseModel):
     memory_id: str
     title: str
@@ -119,4 +139,3 @@ class GenerateSuggestionsRequest(BaseModel):
 
 class SelectVaultRequest(BaseModel):
     path: str
-

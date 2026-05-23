@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import main
 from main import app
 
 
@@ -110,3 +111,62 @@ def test_api_updates_and_deletes_memory_files(tmp_path: Path) -> None:
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
     assert not Path(created["path"]).exists()
+
+
+def test_chat_persists_messages_lists_conversations_and_injects_history(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "chat-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    captured_history: list[list[dict]] = []
+
+    def fake_generate_answer(settings, user_message, memories, conversation_history):
+        captured_history.append(conversation_history)
+        return f"answer: {user_message}"
+
+    monkeypatch.setattr(main, "generate_answer", fake_generate_answer)
+
+    first = client.post("/api/chat", json={"message": "第一轮：项目叫 LuminaMind"})
+    assert first.status_code == 200
+    conversation_id = first.json()["conversation_id"]
+
+    second = client.post(
+        "/api/chat",
+        json={"conversation_id": conversation_id, "message": "第二轮：它的名字是什么？"},
+    )
+    assert second.status_code == 200
+
+    conversations = client.get("/api/conversations")
+    assert conversations.status_code == 200
+    assert conversations.json()["conversations"][0]["id"] == conversation_id
+    assert conversations.json()["conversations"][0]["message_count"] == 4
+
+    messages = client.get(f"/api/conversations/{conversation_id}/messages")
+    assert messages.status_code == 200
+    message_payload = messages.json()["messages"]
+    assert [message["role"] for message in message_payload] == ["user", "assistant", "user", "assistant"]
+    assert message_payload[0]["content"] == "第一轮：项目叫 LuminaMind"
+    assert message_payload[2]["content"] == "第二轮：它的名字是什么？"
+
+    assert captured_history[0] == []
+    assert [item["content"] for item in captured_history[1]] == [
+        "第一轮：项目叫 LuminaMind",
+        "answer: 第一轮：项目叫 LuminaMind",
+    ]
+
+
+def test_create_conversation_starts_empty_chat_thread(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "new-chat-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    created = client.post("/api/conversations", json={"title": "新对话"})
+
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["title"] == "新对话"
+    assert payload["message_count"] == 0
+
+    messages = client.get(f"/api/conversations/{payload['id']}/messages")
+    assert messages.status_code == 200
+    assert messages.json()["messages"] == []

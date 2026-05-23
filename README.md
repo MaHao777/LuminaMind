@@ -451,8 +451,13 @@ POST /api/retrieve
 ### 8.6 聊天
 
 ```http
+GET  /api/conversations
+POST /api/conversations
+GET  /api/conversations/{conversation_id}/messages
 POST /api/chat
 ```
+
+聊天消息会写入 SQLite 的 `conversations` / `messages` 表。`POST /api/chat` 若未传 `conversation_id` 会自动创建新会话；若传入已有 `conversation_id`，后端会读取该会话最近消息作为短期上下文，并和长期记忆检索结果一起注入 LLM Prompt。
 
 请求体：
 

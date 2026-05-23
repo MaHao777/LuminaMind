@@ -1,7 +1,14 @@
-import { Send } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { Plus, Send } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
 
-import { sendChat, type UsedMemory } from "../services/api";
+import {
+  createConversation,
+  getConversationMessages,
+  listConversations,
+  sendChat,
+  type ConversationSummary,
+  type UsedMemory,
+} from "../services/api";
 
 type Message = {
   role: "user" | "assistant";
@@ -10,11 +17,60 @@ type Message = {
 
 export function ChatPage() {
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [usedMemories, setUsedMemories] = useState<UsedMemory[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  async function refreshConversations(preferredId?: string) {
+    const response = await listConversations();
+    setConversations((current) => {
+      const byId = new Map(current.map((conversation) => [conversation.id, conversation]));
+      response.conversations.forEach((conversation) => byId.set(conversation.id, conversation));
+      return Array.from(byId.values()).sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    });
+    if (preferredId) {
+      setConversationId(preferredId);
+    }
+  }
+
+  async function loadConversation(nextId: string) {
+    setError("");
+    setConversationId(nextId);
+    setUsedMemories([]);
+    try {
+      const response = await getConversationMessages(nextId);
+      setMessages(
+        response.messages.map((message) => ({
+          role: message.role === "assistant" ? "assistant" : "user",
+          content: message.content,
+        })),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load conversation");
+    }
+  }
+
+  async function startNewConversation() {
+    setError("");
+    try {
+      const created = await createConversation();
+      setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setConversationId(created.id);
+      setMessages([]);
+      setUsedMemories([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create conversation");
+    }
+  }
+
+  useEffect(() => {
+    listConversations()
+      .then((response) => setConversations(response.conversations))
+      .catch((err: Error) => setError(err.message));
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -31,6 +87,7 @@ export function ChatPage() {
       setConversationId(response.conversation_id);
       setMessages((current) => [...current, { role: "assistant", content: response.answer }]);
       setUsedMemories(response.used_memories);
+      await refreshConversations(response.conversation_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat failed");
     } finally {
@@ -41,8 +98,30 @@ export function ChatPage() {
   return (
     <section className="page-grid chat-grid">
       <div className="panel conversation-list">
-        <h1>Chat</h1>
-        <div className="conversation-row active">Current conversation</div>
+        <div className="panel-header">
+          <h1>Chat</h1>
+          <button type="button" className="icon-button" aria-label="New chat" onClick={startNewConversation}>
+            <Plus size={16} aria-hidden />
+          </button>
+        </div>
+        {conversations.length === 0 ? (
+          <div className="empty-state">No saved conversations.</div>
+        ) : (
+          <div className="conversation-stack">
+            {conversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                type="button"
+                aria-label={conversation.title || "Untitled"}
+                className={conversation.id === conversationId ? "conversation-row active" : "conversation-row"}
+                onClick={() => loadConversation(conversation.id)}
+              >
+                <strong>{conversation.title || "Untitled"}</strong>
+                <span>{conversation.message_count} messages</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <section className="panel chat-panel" aria-label="Agent conversation">

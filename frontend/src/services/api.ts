@@ -52,6 +52,22 @@ export type ChatResponse = {
   used_memories: UsedMemory[];
 };
 
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+};
+
+export type ChatMessage = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | string;
+  content: string;
+  created_at: string;
+};
+
 export type MemorySuggestion = {
   id: string;
   conversation_id: string | null;
@@ -120,6 +136,21 @@ export function sendChat(message: string, conversationId?: string) {
     method: "POST",
     body: JSON.stringify({ message, conversation_id: conversationId }),
   });
+}
+
+export function listConversations() {
+  return request<{ conversations: ConversationSummary[] }>("/api/conversations");
+}
+
+export function createConversation(title = "New conversation") {
+  return request<ConversationSummary>("/api/conversations", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function getConversationMessages(conversationId: string) {
+  return request<{ messages: ChatMessage[] }>(`/api/conversations/${conversationId}/messages`);
 }
 
 export function listSuggestions() {
