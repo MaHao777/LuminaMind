@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
+
+from .conversations import load_messages
+from .db import connect
+from .memory.store import create_memory
+from .models import MemorySuggestion
+
+
+def _row_to_suggestion(row) -> MemorySuggestion:
+    return MemorySuggestion(
+        id=row["id"],
+        conversation_id=row["conversation_id"],
+        action=row["action"],
+        title=row["title"] or "未命名记忆",
+        content=row["content"],
+        type=row["type"] or "log",
+        tags=json.loads(row["tags"] or "[]"),
+        importance=row["importance"] or 3,
+        confidence=row["confidence"] or 0.8,
+        target_note_id=row["target_note_id"],
+        reason=row["reason"] or "",
+        status=row["status"] or "pending",
+        created_at=row["created_at"] or "",
+        updated_at=row["updated_at"] or "",
+    )
+
+
+def create_suggestion(
+    vault_root: Path,
+    *,
+    conversation_id: str | None,
+    title: str,
+    content: str,
+    action: str = "create",
+    note_type: str = "log",
+    tags: list[str] | None = None,
+    importance: int = 3,
+    confidence: float = 0.8,
+    reason: str = "",
+    target_note_id: str | None = None,
+) -> MemorySuggestion:
+    now = datetime.now().isoformat(timespec="seconds")
+    suggestion_id = f"sug_{uuid4().hex[:12]}"
+    with connect(vault_root) as conn:
+        conn.execute(
+            """
+            INSERT INTO memory_suggestions (
+                id, conversation_id, action, title, content, type, tags, importance,
+                confidence, target_note_id, reason, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (
+                suggestion_id,
+                conversation_id,
+                action,
+                title,
+                content,
+                note_type,
+                json.dumps(tags or [], ensure_ascii=False),
+                importance,
+                confidence,
+                target_note_id,
+                reason,
+                now,
+                now,
+            ),
+        )
+    return get_suggestion(vault_root, suggestion_id)
+
+
+def generate_suggestions(vault_root: Path, conversation_id: str | None = None) -> list[MemorySuggestion]:
+    messages = load_messages(vault_root, conversation_id)
+    useful = [message for message in messages if message["role"] in {"user", "assistant"}]
+    if not useful:
+        suggestion = create_suggestion(
+            vault_root,
+            conversation_id=conversation_id,
+            title="对话摘要",
+            content="用户开始使用 LuminaMind 记录长期记忆。",
+            tags=["LuminaMind"],
+            reason="这是一个可审查的候选记忆，用于验证写入闭环。",
+        )
+        return [suggestion]
+
+    last_user = next((message for message in reversed(useful) if message["role"] == "user"), useful[-1])
+    title = last_user["content"].strip().replace("\n", " ")[:32] or "对话摘要"
+    content = "\n".join(f"{message['role']}: {message['content']}" for message in useful[-6:])
+    suggestion = create_suggestion(
+        vault_root,
+        conversation_id=conversation_id,
+        title=f"对话记忆：{title}",
+        content=content,
+        tags=["对话", "LuminaMind"],
+        importance=3,
+        confidence=0.8,
+        reason="对话中包含可能影响后续回答的项目上下文，需由用户审查确认。",
+    )
+    return [suggestion]
+
+
+def list_suggestions(vault_root: Path) -> list[MemorySuggestion]:
+    with connect(vault_root) as conn:
+        rows = conn.execute("SELECT * FROM memory_suggestions ORDER BY created_at DESC").fetchall()
+    return [_row_to_suggestion(row) for row in rows]
+
+
+def get_suggestion(vault_root: Path, suggestion_id: str) -> MemorySuggestion:
+    with connect(vault_root) as conn:
+        row = conn.execute("SELECT * FROM memory_suggestions WHERE id = ?", (suggestion_id,)).fetchone()
+    if row is None:
+        raise KeyError(suggestion_id)
+    return _row_to_suggestion(row)
+
+
+def update_suggestion_status(vault_root: Path, suggestion_id: str, status: str) -> MemorySuggestion:
+    now = datetime.now().isoformat(timespec="seconds")
+    with connect(vault_root) as conn:
+        conn.execute(
+            "UPDATE memory_suggestions SET status = ?, updated_at = ? WHERE id = ?",
+            (status, now, suggestion_id),
+        )
+    return get_suggestion(vault_root, suggestion_id)
+
+
+def accept_suggestion(vault_root: Path, suggestion_id: str) -> MemorySuggestion:
+    suggestion = get_suggestion(vault_root, suggestion_id)
+    if suggestion.action == "create":
+        create_memory(
+            vault_root,
+            title=suggestion.title,
+            content=suggestion.content,
+            note_type=suggestion.type,
+            tags=suggestion.tags,
+            importance=suggestion.importance,
+            confidence=suggestion.confidence,
+            source="chat",
+        )
+    return update_suggestion_status(vault_root, suggestion_id, "accepted")
+

@@ -1,0 +1,2 @@
+"""LuminaMind backend package."""
+
