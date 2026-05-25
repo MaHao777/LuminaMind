@@ -86,6 +86,24 @@ export type MemorySuggestion = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+function getErrorMessage(text: string, status: number): string {
+  if (!text) return `Request failed: ${status}`;
+  try {
+    const payload: unknown = JSON.parse(text);
+    if (
+      typeof payload === "object"
+      && payload !== null
+      && "detail" in payload
+      && typeof payload.detail === "string"
+    ) {
+      return payload.detail;
+    }
+  } catch {
+    return text;
+  }
+  return text;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -97,7 +115,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    throw new Error(getErrorMessage(text, response.status));
   }
   return response.json() as Promise<T>;
 }

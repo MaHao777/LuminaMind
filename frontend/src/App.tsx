@@ -68,7 +68,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main-panel">
+      <main className={page === "chat" ? "main-panel chat-main-panel" : "main-panel"}>
         {error ? <div className="banner error">{error}</div> : null}
         {content}
       </main>

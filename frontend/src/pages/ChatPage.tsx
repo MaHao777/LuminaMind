@@ -1,5 +1,7 @@
 import { Plus, Send, Trash2 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import {
   createConversation,
@@ -25,6 +27,12 @@ export function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [chatError, setChatError] = useState("");
+  const messageEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
+  }, [messages, loading, chatError]);
 
   async function refreshConversations(preferredId?: string) {
     const response = await listConversations();
@@ -40,6 +48,7 @@ export function ChatPage() {
 
   async function loadConversation(nextId: string) {
     setError("");
+    setChatError("");
     setConversationId(nextId);
     setUsedMemories([]);
     setSuggestionCount(0);
@@ -58,6 +67,7 @@ export function ChatPage() {
 
   async function startNewConversation() {
     setError("");
+    setChatError("");
     try {
       const created = await createConversation();
       setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
@@ -82,6 +92,7 @@ export function ChatPage() {
         setMessages([]);
         setUsedMemories([]);
         setSuggestionCount(0);
+        setChatError("");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete conversation");
@@ -103,6 +114,7 @@ export function ChatPage() {
     setMessages((current) => [...current, { role: "user", content: text }]);
     setLoading(true);
     setError("");
+    setChatError("");
     setSuggestionCount(0);
 
     try {
@@ -111,9 +123,14 @@ export function ChatPage() {
       setMessages((current) => [...current, { role: "assistant", content: response.answer }]);
       setUsedMemories(response.used_memories);
       setSuggestionCount(response.memory_suggestions?.length ?? 0);
-      await refreshConversations(response.conversation_id);
+      setLoading(false);
+      try {
+        await refreshConversations(response.conversation_id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to refresh conversations");
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Chat failed");
+      setChatError(err instanceof Error ? err.message : "Chat failed");
     } finally {
       setLoading(false);
     }
@@ -164,11 +181,37 @@ export function ChatPage() {
           ) : (
             messages.map((message, index) => (
               <article key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                <span>{message.role === "user" ? "You" : "Agent"}</span>
-                <p>{message.content}</p>
+                <span className="message-author">{message.role === "user" ? "You" : "Agent"}</span>
+                {message.role === "assistant" ? (
+                  <div className="message-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p>{message.content}</p>
+                )}
               </article>
             ))
           )}
+          {loading ? (
+            <article className="message assistant message-pending" role="status" aria-label="Generating response...">
+              <span className="message-author">Agent</span>
+              <p className="typing-status">
+                Generating response
+                <span className="typing-dots" aria-hidden="true">
+                  <span>.</span>
+                  <span>.</span>
+                  <span>.</span>
+                </span>
+              </p>
+            </article>
+          ) : null}
+          {chatError ? (
+            <article className="message assistant message-error" role="alert">
+              <span className="message-author">Agent</span>
+              <p>{chatError}</p>
+            </article>
+          ) : null}
+          <div ref={messageEndRef} className="message-end" aria-hidden="true" />
         </div>
 
         {error ? <div className="banner error">{error}</div> : null}
@@ -194,16 +237,18 @@ export function ChatPage() {
 
       <aside className="panel memory-source-panel">
         <h2>Used memories</h2>
-        {usedMemories.length === 0 ? (
-          <div className="empty-state">No memories used yet.</div>
-        ) : (
-          usedMemories.map((memory) => (
-            <article className="source-row" key={memory.memory_id}>
-              <strong>{memory.title}</strong>
-              <span>{memory.score.toFixed(2)}</span>
-            </article>
-          ))
-        )}
+        <div className="memory-source-list">
+          {usedMemories.length === 0 ? (
+            <div className="empty-state">No memories used yet.</div>
+          ) : (
+            usedMemories.map((memory) => (
+              <article className="source-row" key={memory.memory_id}>
+                <strong>{memory.title}</strong>
+                <span>{memory.score.toFixed(2)}</span>
+              </article>
+            ))
+          )}
+        </div>
       </aside>
     </section>
   );

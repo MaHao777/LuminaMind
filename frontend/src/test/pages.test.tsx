@@ -169,6 +169,129 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.getByText("1 memory suggestion ready for review.")).toBeInTheDocument();
   });
 
+  it("shows a pending agent message until the chat response arrives", async () => {
+    let resolveChat!: (value: Awaited<ReturnType<typeof api.sendChat>>) => void;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    vi.mocked(api.sendChat).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveChat = resolve;
+      }),
+    );
+    render(<App />);
+
+    await screen.findByText("Project planning");
+    scrollIntoView.mockClear();
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Wait for a reply" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const pending = await screen.findByRole("status", { name: "Generating response..." });
+    expect(pending).toBeInTheDocument();
+    expect(pending.closest(".messages")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+
+    resolveChat({
+      conversation_id: "conv_saved",
+      answer: "**Arrived**",
+      used_memories: [],
+      memory_suggestions: [],
+    });
+
+    expect((await screen.findByText("Arrived")).tagName).toBe("STRONG");
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Generating response..." })).not.toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Next question" },
+    });
+    expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled();
+  });
+
+  it("shows chat failures inline and clears them when retrying", async () => {
+    let rejectChat!: (reason: unknown) => void;
+    vi.mocked(api.sendChat)
+      .mockImplementationOnce(
+        () => new Promise((_resolve, reject) => {
+          rejectChat = reject;
+        }),
+      )
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "This request fails" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    rejectChat(new Error("Model request failed"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Model request failed");
+    expect(alert.closest(".messages")).toBeInTheDocument();
+    expect(screen.queryByText("Generating response...")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Retry request" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "Generating response..." })).toBeInTheDocument();
+  });
+
+  it("renders assistant responses as GitHub Flavored Markdown", async () => {
+    vi.mocked(api.sendChat).mockResolvedValueOnce({
+      conversation_id: "conv_saved",
+      answer: "# Delivery\n\n**Ready**\n\n- First item\n- Second item\n\n| Format | State |\n| --- | --- |\n| Markdown | Enabled |",
+      used_memories: [],
+      memory_suggestions: [],
+    });
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Show formatted output" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Delivery" })).toBeInTheDocument();
+    expect(screen.getByText("Ready").tagName).toBe("STRONG");
+    expect(screen.getByRole("list")).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
+
+  it("does not mount raw HTML returned inside assistant markdown", async () => {
+    vi.mocked(api.sendChat).mockResolvedValueOnce({
+      conversation_id: "conv_saved",
+      answer: "**Formatted**\n\n<script data-testid=\"injected-script\">window.injection = true</script><span data-testid=\"injected-html\">Unsafe</span>",
+      used_memories: [],
+      memory_suggestions: [],
+    });
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Keep output safe" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect((await screen.findByText("Formatted")).tagName).toBe("STRONG");
+    expect(screen.queryByTestId("injected-script")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("injected-html")).not.toBeInTheDocument();
+  });
+
+  it("exposes bounded scroll regions for the chat workspace panels", async () => {
+    const { container } = render(<App />);
+
+    expect(await screen.findByText("Project planning")).toBeInTheDocument();
+    expect(container.querySelector("main.chat-main-panel")).toBeInTheDocument();
+    expect(container.querySelector(".chat-panel .messages")).toBeInTheDocument();
+    expect(container.querySelector(".chat-panel .messages .message-end")).toBeInTheDocument();
+    expect(container.querySelector(".conversation-list .conversation-stack")).toBeInTheDocument();
+    expect(container.querySelector(".memory-source-panel .memory-source-list")).toBeInTheDocument();
+  });
+
   it("loads saved conversations and can start a new chat", async () => {
     render(<App />);
 
