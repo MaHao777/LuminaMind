@@ -1,31 +1,18 @@
 import { Check, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
-import { acceptSuggestion, listSuggestions, rejectSuggestion, type MemorySuggestion } from "../services/api";
+import { MarkdownContent } from "../components/MarkdownContent";
+import { acceptSuggestion, rejectSuggestion, type MemorySuggestion } from "../services/api";
 
 type Props = {
-  onSuggestionsLoaded?: (suggestions: MemorySuggestion[]) => void;
+  suggestions: MemorySuggestion[];
+  onSuggestionsChanged?: () => void | Promise<void>;
 };
 
-export function ReviewPage({ onSuggestionsLoaded }: Props) {
-  const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
+export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
   const [processingIds, setProcessingIds] = useState<Set<string>>(() => new Set());
   const inFlight = useRef<Set<string>>(new Set());
   const [error, setError] = useState("");
-
-  async function load() {
-    try {
-      const response = await listSuggestions();
-      setSuggestions(response.suggestions);
-      onSuggestionsLoaded?.(response.suggestions);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load suggestions");
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
 
   async function processSuggestion(
     id: string,
@@ -37,7 +24,7 @@ export function ReviewPage({ onSuggestionsLoaded }: Props) {
     setError("");
     try {
       await request(id);
-      await load();
+      await onSuggestionsChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to process suggestion");
     } finally {
@@ -65,8 +52,8 @@ export function ReviewPage({ onSuggestionsLoaded }: Props) {
                     : suggestion.status}
                 </span>
                 <h2>{suggestion.title}</h2>
-                <p>{suggestion.content}</p>
-                <small>{suggestion.reason}</small>
+                <MarkdownContent className="suggestion-content">{suggestion.content}</MarkdownContent>
+                <MarkdownContent className="suggestion-reason">{suggestion.reason}</MarkdownContent>
               </div>
               <div className="card-actions">
                 <button

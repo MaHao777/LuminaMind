@@ -1,7 +1,6 @@
 import { RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { MarkdownContent } from "../components/MarkdownContent";
 
 import { deleteMemory, listMemories, rebuildIndex, scanVault, type MemoryNote } from "../services/api";
 
@@ -108,9 +107,7 @@ export function MemoryPage() {
             <div className="tag-row">
               {selected.tags.map((tag) => <span key={tag}>{tag}</span>)}
             </div>
-            <div className="markdown-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{selected.content}</ReactMarkdown>
-            </div>
+            <MarkdownContent>{selected.content}</MarkdownContent>
           </>
         ) : (
           <div className="empty-state">Select a memory to inspect its Markdown content.</div>

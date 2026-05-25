@@ -24,13 +24,32 @@ def ensure_conversation(vault_root: Path, conversation_id: str | None, title: st
 
 
 def create_conversation(vault_root: Path, title: str = "New conversation") -> ConversationSummary:
-    conv_id = f"conv_{uuid4().hex[:12]}"
-    now = datetime.now().isoformat(timespec="seconds")
     with connect(vault_root) as conn:
-        conn.execute(
-            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (conv_id, title or "New conversation", now, now),
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            """
+            SELECT conversations.id
+            FROM conversations
+            WHERE NOT EXISTS (
+                SELECT 1 FROM messages WHERE messages.conversation_id = conversations.id
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM memory_suggestions
+                WHERE memory_suggestions.conversation_id = conversations.id
+            )
+            ORDER BY conversations.updated_at DESC, conversations.created_at DESC, conversations.rowid DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if existing is not None:
+            conv_id = existing["id"]
+        else:
+            conv_id = f"conv_{uuid4().hex[:12]}"
+            now = datetime.now().isoformat(timespec="seconds")
+            conn.execute(
+                "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (conv_id, title or "New conversation", now, now),
+            )
     return get_conversation(vault_root, conv_id)
 
 

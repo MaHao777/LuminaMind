@@ -99,6 +99,25 @@ def connect(vault_root: Path) -> sqlite3.Connection:
     return conn
 
 
+def _prune_disposable_conversation_drafts(conn: sqlite3.Connection) -> None:
+    disposable_drafts = conn.execute(
+        """
+        SELECT conversations.id
+        FROM conversations
+        WHERE NOT EXISTS (
+            SELECT 1 FROM messages WHERE messages.conversation_id = conversations.id
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM memory_suggestions
+            WHERE memory_suggestions.conversation_id = conversations.id
+        )
+        ORDER BY conversations.updated_at DESC, conversations.created_at DESC, conversations.rowid DESC
+        """
+    ).fetchall()
+    for draft in disposable_drafts[1:]:
+        conn.execute("DELETE FROM conversations WHERE id = ?", (draft["id"],))
+
+
 def initialize_database(vault_root: Path) -> None:
     with connect(vault_root) as conn:
         conn.executescript(SCHEMA)
@@ -107,3 +126,4 @@ def initialize_database(vault_root: Path) -> None:
         }
         if "pinned" not in conversation_columns:
             conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        _prune_disposable_conversation_drafts(conn)

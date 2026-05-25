@@ -1,8 +1,7 @@
 import { Pin, Plus, Send, Trash2 } from "lucide-react";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
+import { MarkdownContent } from "../components/MarkdownContent";
 import {
   createConversation,
   deleteConversation,
@@ -25,7 +24,18 @@ type ConversationMenu = {
   top: number;
 };
 
+type PendingChat = {
+  requestId: number;
+  conversationId?: string;
+  vaultPath?: string;
+  messages: Message[];
+  usedMemories: UsedMemory[];
+};
+
 type Props = {
+  hidden?: boolean;
+  vaultPath?: string;
+  pendingSuggestionCount: number;
   onSuggestionsChanged?: () => void | Promise<void>;
 };
 
@@ -38,19 +48,61 @@ function sortConversations(conversations: ConversationSummary[]) {
   );
 }
 
-export function ChatPage({ onSuggestionsChanged }: Props) {
+function mostRecentlyUpdatedConversation(conversations: ConversationSummary[]) {
+  return [...conversations].sort(
+    (left, right) =>
+      right.updated_at.localeCompare(left.updated_at)
+      || right.created_at.localeCompare(left.created_at),
+  )[0];
+}
+
+function toMessages(messages: Array<{ role: string; content: string }>): Message[] {
+  return messages.map((message) => ({
+    role: message.role === "assistant" ? "assistant" : "user",
+    content: message.content,
+  }));
+}
+
+export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, onSuggestionsChanged }: Props) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [usedMemories, setUsedMemories] = useState<UsedMemory[]>([]);
-  const [suggestionCount, setSuggestionCount] = useState(0);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [pendingChat, setPendingChat] = useState<PendingChat | null>(null);
   const [error, setError] = useState("");
   const [chatError, setChatError] = useState("");
   const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const vaultPathRef = useRef(vaultPath);
+  const conversationIdRef = useRef(conversationId);
+  const pendingChatRef = useRef<PendingChat | null>(null);
+  const requestIdRef = useRef(0);
+  const initializedVaultRef = useRef(false);
+  const displayRevisionRef = useRef(0);
+  vaultPathRef.current = vaultPath;
+  conversationIdRef.current = conversationId;
+  const loading = Boolean(
+    pendingChat
+    && pendingChat.conversationId === conversationId
+    && (pendingChat.vaultPath === undefined || pendingChat.vaultPath === vaultPath),
+  );
+  const requestInFlight = pendingChat !== null;
+
+  function selectConversation(nextId?: string) {
+    conversationIdRef.current = nextId;
+    setConversationId(nextId);
+  }
+
+  function updatePendingChat(nextPendingChat: PendingChat | null) {
+    pendingChatRef.current = nextPendingChat;
+    setPendingChat(nextPendingChat);
+  }
+
+  function isPendingRequest(requestId: number) {
+    return pendingChatRef.current?.requestId === requestId;
+  }
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
@@ -76,47 +128,48 @@ export function ChatPage({ onSuggestionsChanged }: Props) {
     };
   }, [conversationMenu]);
 
-  async function refreshConversations(preferredId?: string) {
+  async function refreshConversations() {
     const response = await listConversations();
-    setConversations((current) => {
-      const byId = new Map(current.map((conversation) => [conversation.id, conversation]));
-      response.conversations.forEach((conversation) => byId.set(conversation.id, conversation));
-      return sortConversations(Array.from(byId.values()));
-    });
-    if (preferredId) {
-      setConversationId(preferredId);
-    }
+    setConversations(sortConversations(response.conversations));
   }
 
   async function loadConversation(nextId: string) {
+    const revision = ++displayRevisionRef.current;
+    const activeVaultPath = vaultPathRef.current;
     setError("");
     setChatError("");
-    setConversationId(nextId);
+    selectConversation(nextId);
+    const activeRequest = pendingChatRef.current;
+    if (
+      activeRequest?.conversationId === nextId
+      && (activeRequest.vaultPath === undefined || activeRequest.vaultPath === activeVaultPath)
+    ) {
+      setMessages(activeRequest.messages);
+      setUsedMemories(activeRequest.usedMemories);
+      return;
+    }
     setUsedMemories([]);
-    setSuggestionCount(0);
     try {
       const response = await getConversationMessages(nextId);
-      setMessages(
-        response.messages.map((message) => ({
-          role: message.role === "assistant" ? "assistant" : "user",
-          content: message.content,
-        })),
-      );
+      if (revision !== displayRevisionRef.current || activeVaultPath !== vaultPathRef.current) return;
+      setMessages(toMessages(response.messages));
     } catch (err) {
+      if (revision !== displayRevisionRef.current || activeVaultPath !== vaultPathRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load conversation");
     }
   }
 
   async function startNewConversation() {
+    if (pendingChatRef.current) return;
     setError("");
     setChatError("");
     try {
       const created = await createConversation();
+      ++displayRevisionRef.current;
       setConversations((current) => sortConversations([created, ...current.filter((item) => item.id !== created.id)]));
-      setConversationId(created.id);
+      selectConversation(created.id);
       setMessages([]);
       setUsedMemories([]);
-      setSuggestionCount(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create conversation");
     }
@@ -129,13 +182,19 @@ export function ChatPage({ onSuggestionsChanged }: Props) {
     setError("");
     try {
       await deleteConversation(conversation.id);
-      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      const remaining = conversations.filter((item) => item.id !== conversation.id);
+      setConversations(remaining);
       if (conversationId === conversation.id) {
-        setConversationId(undefined);
-        setMessages([]);
-        setUsedMemories([]);
-        setSuggestionCount(0);
-        setChatError("");
+        const nextConversation = mostRecentlyUpdatedConversation(remaining);
+        if (nextConversation) {
+          await loadConversation(nextConversation.id);
+        } else {
+          ++displayRevisionRef.current;
+          selectConversation(undefined);
+          setMessages([]);
+          setUsedMemories([]);
+          setChatError("");
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete conversation");
@@ -177,49 +236,93 @@ export function ChatPage({ onSuggestionsChanged }: Props) {
   }
 
   useEffect(() => {
+    if (vaultPath === undefined) return;
+    const initialHydration = !initializedVaultRef.current;
+    initializedVaultRef.current = true;
+    if (initialHydration && (pendingChatRef.current || messages.length > 0 || input.length > 0)) return;
+
+    const revision = ++displayRevisionRef.current;
+    selectConversation(undefined);
+    setConversations([]);
+    setMessages([]);
+    setUsedMemories([]);
+    setInput("");
+    updatePendingChat(null);
+    setError("");
+    setChatError("");
+    setConversationMenu(null);
+    if (!vaultPath) return;
+
     listConversations()
-      .then((response) => setConversations(sortConversations(response.conversations)))
-      .catch((err: Error) => setError(err.message));
-  }, []);
+      .then(async (response) => {
+        if (revision !== displayRevisionRef.current || vaultPath !== vaultPathRef.current) return;
+        setConversations(sortConversations(response.conversations));
+        const recent = mostRecentlyUpdatedConversation(response.conversations);
+        if (!recent) return;
+        const messageResponse = await getConversationMessages(recent.id);
+        if (revision !== displayRevisionRef.current || vaultPath !== vaultPathRef.current) return;
+        selectConversation(recent.id);
+        setMessages(toMessages(messageResponse.messages));
+      })
+      .catch((err: Error) => {
+        if (revision === displayRevisionRef.current && vaultPath === vaultPathRef.current) setError(err.message);
+      });
+  }, [vaultPath]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || pendingChatRef.current) return;
+    const requestId = ++requestIdRef.current;
+    const submittedConversationId = conversationIdRef.current;
+    const activeVaultPath = vaultPathRef.current;
+    const submittedMessages = [...messages, { role: "user", content: text } as Message];
+    const request: PendingChat = {
+      requestId,
+      conversationId: submittedConversationId,
+      vaultPath: activeVaultPath,
+      messages: submittedMessages,
+      usedMemories,
+    };
 
     setInput("");
-    setMessages((current) => [...current, { role: "user", content: text }]);
-    setLoading(true);
+    setMessages(submittedMessages);
+    updatePendingChat(request);
     setError("");
     setChatError("");
-    setSuggestionCount(0);
 
     try {
-      const response = await sendChat(text, conversationId);
-      setConversationId(response.conversation_id);
-      setMessages((current) => [...current, { role: "assistant", content: response.answer }]);
-      setUsedMemories(response.used_memories);
-      setSuggestionCount(response.memory_suggestions?.filter((suggestion) => suggestion.status === "pending").length ?? 0);
+      const response = await sendChat(text, submittedConversationId);
+      if (!isPendingRequest(requestId)) return;
+      if (activeVaultPath !== undefined && activeVaultPath !== vaultPathRef.current) return;
+      updatePendingChat(null);
+      if (conversationIdRef.current === submittedConversationId) {
+        selectConversation(response.conversation_id);
+        setMessages([...submittedMessages, { role: "assistant", content: response.answer }]);
+        setUsedMemories(response.used_memories);
+      }
       void onSuggestionsChanged?.();
-      setLoading(false);
       try {
-        await refreshConversations(response.conversation_id);
+        await refreshConversations();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to refresh conversations");
       }
     } catch (err) {
-      setChatError(err instanceof Error ? err.message : "Chat failed");
-    } finally {
-      setLoading(false);
+      if (!isPendingRequest(requestId)) return;
+      if (activeVaultPath !== undefined && activeVaultPath !== vaultPathRef.current) return;
+      updatePendingChat(null);
+      if (conversationIdRef.current === submittedConversationId) {
+        setChatError(err instanceof Error ? err.message : "Chat failed");
+      }
     }
   }
 
   return (
-    <section className="page-grid chat-grid">
+    <section className="page-grid chat-grid" hidden={hidden}>
       <div className="panel conversation-list">
         <div className="panel-header">
           <h1>Chat</h1>
-          <button type="button" className="icon-button" aria-label="New chat" onClick={startNewConversation}>
+          <button type="button" className="icon-button" aria-label="New chat" disabled={requestInFlight} onClick={startNewConversation}>
             <Plus size={16} aria-hidden />
           </button>
         </div>
@@ -290,13 +393,7 @@ export function ChatPage({ onSuggestionsChanged }: Props) {
             messages.map((message, index) => (
               <article key={`${message.role}-${index}`} className={`message ${message.role}`}>
                 <span className="message-author">{message.role === "user" ? "You" : "Agent"}</span>
-                {message.role === "assistant" ? (
-                  <div className="message-content">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                  </div>
-                ) : (
-                  <p>{message.content}</p>
-                )}
+                <MarkdownContent className="message-content">{message.content}</MarkdownContent>
               </article>
             ))
           )}
@@ -323,9 +420,9 @@ export function ChatPage({ onSuggestionsChanged }: Props) {
         </div>
 
         {error ? <div className="banner error">{error}</div> : null}
-        {suggestionCount > 0 ? (
+        {pendingSuggestionCount > 0 ? (
           <div className="banner success">
-            {suggestionCount} memory suggestion{suggestionCount === 1 ? "" : "s"} ready for review.
+            {pendingSuggestionCount} memory suggestion{pendingSuggestionCount === 1 ? "" : "s"} ready for review.
           </div>
         ) : null}
 
@@ -336,7 +433,7 @@ export function ChatPage({ onSuggestionsChanged }: Props) {
             placeholder="Ask LuminaMind..."
             aria-label="Chat message"
           />
-          <button type="submit" disabled={loading || !input.trim()}>
+          <button type="submit" disabled={requestInFlight || !input.trim()}>
             <Send size={16} aria-hidden />
             Send
           </button>

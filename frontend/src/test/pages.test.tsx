@@ -255,6 +255,9 @@ describe("LuminaMind MVP frontend", () => {
   });
 
   it("does not prompt for review when chat suggestions were automatically accepted", async () => {
+    vi.mocked(api.listSuggestions)
+      .mockResolvedValueOnce({ suggestions: [] })
+      .mockResolvedValueOnce({ suggestions: [] });
     vi.mocked(api.sendChat).mockResolvedValueOnce({
       conversation_id: "conv_saved",
       answer: "自动保存完成。",
@@ -494,11 +497,6 @@ describe("LuminaMind MVP frontend", () => {
         content: "用户偏好端到端切片。", type: "profile", tags: ["偏好"], importance: 4,
         confidence: 0.8, target_note_id: null, reason: "对未来回答有帮助", status: "pending",
       }] })
-      .mockResolvedValueOnce({ suggestions: [{
-        id: "sug_1", conversation_id: "conv_1", action: "create", title: "新的长期偏好",
-        content: "用户偏好端到端切片。", type: "profile", tags: ["偏好"], importance: 4,
-        confidence: 0.8, target_note_id: null, reason: "对未来回答有帮助", status: "pending",
-      }] })
       .mockResolvedValueOnce({ suggestions: [] });
     render(<App />);
 
@@ -520,7 +518,6 @@ describe("LuminaMind MVP frontend", () => {
       }],
     };
     vi.mocked(api.listSuggestions)
-      .mockResolvedValueOnce(acceptedHistory)
       .mockResolvedValueOnce(acceptedHistory);
     render(<App />);
 
@@ -578,5 +575,309 @@ describe("LuminaMind MVP frontend", () => {
 
     expect(await screen.findByText("Accept failed")).toBeInTheDocument();
     expect(accept).not.toBeDisabled();
+  });
+
+  it("renders math and highlighted code in stored memories", async () => {
+    vi.mocked(api.listMemories).mockResolvedValueOnce({
+      memories: [{
+        ...sampleMemory,
+        content: "Inline $x^2$.\n\n$$\nE = mc^2\n$$\n\n```ts\nconst energy = 1;\n```",
+      }],
+    });
+    const { container } = render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+
+    await screen.findAllByText(sampleMemory.title);
+    expect(container.querySelector(".markdown-content .katex")).toBeInTheDocument();
+    expect(container.querySelector(".markdown-content .katex-display")).toBeInTheDocument();
+    expect(container.querySelector(".markdown-content code.hljs.language-ts")).toBeInTheDocument();
+  });
+
+  it("renders formulas and highlighted code in chat messages", async () => {
+    vi.mocked(api.sendChat).mockResolvedValueOnce({
+      conversation_id: "conv_saved",
+      answer: "Inline $x^2$.\n\n$$\nE = mc^2\n$$\n\n```ts\nconst energy = 1;\n```",
+      used_memories: [],
+      memory_suggestions: [],
+    });
+    const { container } = render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "Render output" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(container.querySelector(".message-content .katex")).toBeInTheDocument());
+    expect(container.querySelector(".message-content .katex-display")).toBeInTheDocument();
+    expect(container.querySelector(".message-content code.hljs.language-ts")).toBeInTheDocument();
+  });
+
+  it("renders LaTeX bracket and parenthesis delimiters returned by the model", async () => {
+    vi.mocked(api.sendChat).mockResolvedValueOnce({
+      conversation_id: "conv_saved",
+      answer: "Display equation:\n\n\\[\n\\nabla \\cdot \\mathbf{E} = \\frac{\\rho}{\\varepsilon_0}\n\\]\n\nInline \\(E = mc^2\\).",
+      used_memories: [],
+      memory_suggestions: [],
+    });
+    const { container } = render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "Render LaTeX" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(container.querySelector(".message-content .katex-display")).toBeInTheDocument());
+    expect(container.querySelectorAll(".message-content .katex")).toHaveLength(2);
+  });
+
+  it("renders Review suggestion Markdown with math and highlighted code safely", async () => {
+    vi.mocked(api.listSuggestions).mockResolvedValue({
+      suggestions: [{
+        id: "sug_markdown",
+        conversation_id: "conv_1",
+        action: "create",
+        title: "Rendered suggestion",
+        content: "Formula $x^2$.\n\n```ts\nconst value = 1;\n```\n\n<span data-testid=\"review-html\">Unsafe</span>",
+        type: "concept",
+        tags: [],
+        importance: 3,
+        confidence: 0.8,
+        target_note_id: null,
+        reason: "**Useful** reason.",
+        status: "pending",
+      }],
+    });
+    const { container } = render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review, 1 pending" }));
+
+    expect(await screen.findByText("Rendered suggestion")).toBeInTheDocument();
+    expect(container.querySelector(".suggestion-content .katex")).toBeInTheDocument();
+    expect(container.querySelector(".suggestion-content code.hljs.language-ts")).toBeInTheDocument();
+    expect(screen.getByText("Useful").tagName).toBe("STRONG");
+    expect(screen.queryByTestId("review-html")).not.toBeInTheDocument();
+  });
+
+  it("keeps the generating response visible while navigating away and back", async () => {
+    vi.mocked(api.sendChat).mockImplementationOnce(() => new Promise(() => undefined));
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Wait while browsing elsewhere" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("status", { name: "Generating response..." })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+
+    expect(screen.getByRole("status", { name: "Generating response..." })).toBeInTheDocument();
+    expect(screen.getByText("Wait while browsing elsewhere")).toBeInTheDocument();
+  });
+
+  it("keeps an in-flight response visible after switching conversations and returning", async () => {
+    vi.mocked(api.listConversations).mockResolvedValue({
+      conversations: [
+        {
+          id: "conv_active",
+          title: "Active request",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:02:00",
+          message_count: 1,
+          pinned: false,
+        },
+        {
+          id: "conv_other",
+          title: "Other chat",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:01:00",
+          message_count: 1,
+          pinned: false,
+        },
+      ],
+    });
+    vi.mocked(api.getConversationMessages).mockImplementation(async (id) => ({
+      messages: [{
+        id: `msg_${id}`,
+        conversation_id: id,
+        role: "assistant",
+        content: `Stored message from ${id}`,
+        created_at: "2026-05-23T10:01:00",
+      }],
+    }));
+    let resolveChat!: (value: Awaited<ReturnType<typeof api.sendChat>>) => void;
+    vi.mocked(api.sendChat).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveChat = resolve;
+      }),
+    );
+    render(<App />);
+
+    expect(await screen.findByText("Stored message from conv_active")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), {
+      target: { value: "Keep this generation" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("status", { name: "Generating response..." })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Other chat" }));
+    expect(await screen.findByText("Stored message from conv_other")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Active request" }));
+
+    expect(screen.getByRole("status", { name: "Generating response..." })).toBeInTheDocument();
+    expect(screen.getByText("Keep this generation")).toBeInTheDocument();
+
+    resolveChat({
+      conversation_id: "conv_active",
+      answer: "Completed after returning.",
+      used_memories: [],
+      memory_suggestions: [],
+    });
+    expect(await screen.findByText("Completed after returning.")).toBeInTheDocument();
+  });
+
+  it("updates an already open Review page when a chat response creates a suggestion", async () => {
+    const liveSuggestion = {
+      id: "sug_live",
+      conversation_id: "conv_saved",
+      action: "create",
+      title: "Live review suggestion",
+      content: "Remember $x^2$.",
+      type: "concept",
+      tags: ["live"],
+      importance: 3,
+      confidence: 0.8,
+      target_note_id: null,
+      reason: "Created after the response.",
+      status: "pending" as const,
+    };
+    let suggestionReady = false;
+    let resolveChat!: (value: Awaited<ReturnType<typeof api.sendChat>>) => void;
+    vi.mocked(api.listSuggestions).mockImplementation(async () => ({
+      suggestions: suggestionReady ? [liveSuggestion] : [],
+    }));
+    vi.mocked(api.sendChat).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveChat = resolve;
+      }),
+    );
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "Generate review" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.queryByText("Live review suggestion")).not.toBeInTheDocument();
+
+    suggestionReady = true;
+    resolveChat({
+      conversation_id: "conv_saved",
+      answer: "Reply complete.",
+      used_memories: [],
+      memory_suggestions: [liveSuggestion],
+    });
+
+    expect(await screen.findByText("Live review suggestion")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Review, 1 pending" })).toBeInTheDocument();
+  });
+
+  it("opens the most recently updated chat first and preserves an explicit selection across pages", async () => {
+    vi.mocked(api.listConversations).mockResolvedValue({
+      conversations: [
+        {
+          id: "conv_pinned_old",
+          title: "Pinned old",
+          created_at: "2026-05-22T10:00:00",
+          updated_at: "2026-05-22T10:01:00",
+          message_count: 1,
+          pinned: true,
+        },
+        {
+          id: "conv_recent",
+          title: "Recent chat",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:01:00",
+          message_count: 1,
+          pinned: false,
+        },
+      ],
+    });
+    vi.mocked(api.getConversationMessages).mockImplementation(async (id) => ({
+      messages: [{
+        id: `msg_${id}`,
+        conversation_id: id,
+        role: "assistant",
+        content: `Message from ${id}`,
+        created_at: "2026-05-23T10:01:00",
+      }],
+    }));
+    render(<App />);
+
+    expect(await screen.findByText("Message from conv_recent")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pinned old" }));
+    expect(await screen.findByText("Message from conv_pinned_old")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.getByText("Message from conv_pinned_old")).toBeInTheDocument();
+  });
+
+  it("clears the previous chat and loads the latest conversation after switching vaults", async () => {
+    const chooseVaultDirectory = vi.fn(async () => "D:/second-vault");
+    let secondVaultSelected = false;
+    Object.defineProperty(window, "luminaDesktop", {
+      configurable: true,
+      value: { chooseVaultDirectory },
+    });
+    vi.mocked(api.selectVault).mockImplementationOnce(async (path: string) => {
+      secondVaultSelected = true;
+      return { path };
+    });
+    vi.mocked(api.listConversations).mockImplementation(async () => ({
+      conversations: [{
+        id: secondVaultSelected ? "conv_second" : "conv_first",
+        title: secondVaultSelected ? "Second vault chat" : "First vault chat",
+        created_at: "2026-05-23T10:00:00",
+        updated_at: "2026-05-23T10:01:00",
+        message_count: 1,
+        pinned: false,
+      }],
+    }));
+    vi.mocked(api.getConversationMessages).mockImplementation(async (id) => ({
+      messages: [{
+        id: `msg_${id}`,
+        conversation_id: id,
+        role: "assistant",
+        content: `Loaded ${id}`,
+        created_at: "2026-05-23T10:01:00",
+      }],
+    }));
+    render(<App />);
+
+    expect(await screen.findByText("Loaded conv_first")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select vault" }));
+    await waitFor(() => expect(api.selectVault).toHaveBeenCalledWith("D:/second-vault"));
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+
+    expect(await screen.findByText("Loaded conv_second")).toBeInTheDocument();
+    expect(screen.queryByText("Loaded conv_first")).not.toBeInTheDocument();
+  });
+
+  it("shows a reused empty conversation only once after repeated New chat clicks", async () => {
+    const reusedDraft = {
+      id: "conv_blank",
+      title: "New conversation",
+      created_at: "2026-05-23T10:02:00",
+      updated_at: "2026-05-23T10:02:00",
+      message_count: 0,
+      pinned: false,
+    };
+    vi.mocked(api.listConversations).mockResolvedValue({ conversations: [] });
+    vi.mocked(api.createConversation).mockResolvedValue(reusedDraft);
+    render(<App />);
+    await waitFor(() => expect(api.listConversations).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => expect(api.createConversation).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByRole("button", { name: "New conversation" })).toHaveLength(1);
   });
 });

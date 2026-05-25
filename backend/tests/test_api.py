@@ -378,6 +378,78 @@ def test_create_conversation_starts_empty_chat_thread(tmp_path: Path) -> None:
     assert messages.json()["messages"] == []
 
 
+def test_create_conversation_reuses_the_only_disposable_empty_draft(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "one-empty-draft-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    first = client.post("/api/conversations", json={"title": "First blank"}).json()
+    second = client.post("/api/conversations", json={"title": "Second blank"}).json()
+
+    assert second["id"] == first["id"]
+    conversations = client.get("/api/conversations").json()["conversations"]
+    assert [(item["id"], item["message_count"]) for item in conversations] == [(first["id"], 0)]
+
+
+def test_create_conversation_allows_a_new_draft_after_the_previous_one_has_messages(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "used-draft-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    first = client.post("/api/conversations", json={"title": "First blank"}).json()
+    add_message(vault_path, first["id"], "user", "This conversation is no longer blank.")
+    second = client.post("/api/conversations", json={"title": "Second blank"}).json()
+
+    assert second["id"] != first["id"]
+    conversations = client.get("/api/conversations").json()["conversations"]
+    assert {item["id"] for item in conversations} == {first["id"], second["id"]}
+
+
+def test_selecting_vault_prunes_legacy_duplicate_disposable_drafts(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "legacy-empty-drafts-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    with sqlite3.connect(db_path(vault_path)) as conn:
+        conn.executemany(
+            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            [
+                ("conv_old_blank", "Old blank", "2026-05-20T10:00:00", "2026-05-20T10:00:00"),
+                ("conv_new_blank", "New blank", "2026-05-21T10:00:00", "2026-05-21T10:00:00"),
+            ],
+        )
+
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    conversations = client.get("/api/conversations").json()["conversations"]
+    assert [item["id"] for item in conversations] == ["conv_new_blank"]
+
+
+def test_empty_conversation_with_suggestion_is_not_pruned_as_a_draft(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "review-linked-empty-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    with sqlite3.connect(db_path(vault_path)) as conn:
+        conn.executemany(
+            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            [
+                ("conv_review", "Review-linked", "2026-05-20T10:00:00", "2026-05-20T10:00:00"),
+                ("conv_old_blank", "Old blank", "2026-05-21T10:00:00", "2026-05-21T10:00:00"),
+                ("conv_new_blank", "New blank", "2026-05-22T10:00:00", "2026-05-22T10:00:00"),
+            ],
+        )
+    suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id="conv_review",
+        title="Review this",
+        content="This suggestion preserves the linked conversation.",
+    )
+
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    conversations = client.get("/api/conversations").json()["conversations"]
+    assert {item["id"] for item in conversations} == {"conv_review", "conv_new_blank"}
+
+
 def test_delete_conversation_removes_messages_and_suggestions_but_keeps_accepted_memory(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -419,6 +491,24 @@ def test_legacy_conversations_are_migrated_and_pinned_threads_sort_first(tmp_pat
         conn.execute(
             "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
             ("conv_new", "Newer regular", "2026-05-23T10:00:00", "2026-05-23T10:00:00"),
+        )
+        conn.execute(
+            """
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            [
+                ("msg_old", "conv_old", "user", "Keep pinned history", "2026-05-22T10:00:00"),
+                ("msg_new", "conv_new", "user", "Keep recent history", "2026-05-23T10:00:00"),
+            ],
         )
 
     assert client.post("/api/vault/select", json={"path": str(vault_path)}).status_code == 200

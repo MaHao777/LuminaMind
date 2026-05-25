@@ -1,5 +1,5 @@
 import { BookOpenText, CheckCheck, MessageSquareText, Search, Settings, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ChatPage } from "./pages/ChatPage";
 import { MemoryPage } from "./pages/MemoryPage";
@@ -19,8 +19,9 @@ const navItems: Array<{ id: Page; label: string; icon: typeof MessageSquareText 
 export default function App() {
   const [page, setPage] = useState<Page>("chat");
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [pendingSuggestionCount, setPendingSuggestionCount] = useState(0);
+  const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
   const [error, setError] = useState<string>("");
+  const pendingSuggestionCount = suggestions.filter((suggestion) => suggestion.status === "pending").length;
 
   useEffect(() => {
     getSettings()
@@ -28,37 +29,22 @@ export default function App() {
       .catch((err: Error) => setError(err.message));
   }, []);
 
-  function updatePendingCount(suggestions: MemorySuggestion[]) {
-    setPendingSuggestionCount(suggestions.filter((suggestion) => suggestion.status === "pending").length);
-  }
-
-  async function refreshPendingSuggestions() {
+  const refreshPendingSuggestions = useCallback(async () => {
     if (!settings?.vault_path) {
-      setPendingSuggestionCount(0);
+      setSuggestions([]);
       return;
     }
     try {
       const response = await listSuggestions();
-      updatePendingCount(response.suggestions);
+      setSuggestions(response.suggestions);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pending reviews");
     }
-  }
+  }, [settings?.vault_path]);
 
   useEffect(() => {
     void refreshPendingSuggestions();
-  }, [settings?.vault_path]);
-
-  let content;
-  if (page === "memory") {
-    content = <MemoryPage />;
-  } else if (page === "review") {
-    content = <ReviewPage onSuggestionsLoaded={updatePendingCount} />;
-  } else if (page === "settings") {
-    content = <SettingsPage settings={settings} onSettingsChange={setSettings} />;
-  } else {
-    content = <ChatPage onSuggestionsChanged={refreshPendingSuggestions} />;
-  }
+  }, [refreshPendingSuggestions]);
 
   return (
     <div className="app-shell">
@@ -102,7 +88,17 @@ export default function App() {
 
       <main className={page === "chat" ? "main-panel chat-main-panel" : "main-panel"}>
         {error ? <div className="banner error">{error}</div> : null}
-        {content}
+        <ChatPage
+          hidden={page !== "chat"}
+          vaultPath={settings?.vault_path}
+          pendingSuggestionCount={pendingSuggestionCount}
+          onSuggestionsChanged={refreshPendingSuggestions}
+        />
+        {page === "memory" ? <MemoryPage /> : null}
+        {page === "review" ? (
+          <ReviewPage suggestions={suggestions} onSuggestionsChanged={refreshPendingSuggestions} />
+        ) : null}
+        {page === "settings" ? <SettingsPage settings={settings} onSettingsChange={setSettings} /> : null}
       </main>
     </div>
   );
