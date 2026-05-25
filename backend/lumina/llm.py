@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 import httpx
@@ -10,9 +11,14 @@ from .models import RetrievalResult
 
 
 MESSAGE_OVERHEAD_TOKENS = 16
+logger = logging.getLogger(__name__)
 
 
 class ContextWindowExceededError(ValueError):
+    pass
+
+
+class LLMUnavailableError(RuntimeError):
     pass
 
 
@@ -48,31 +54,6 @@ def select_conversation_history(
         prompt_tokens += history_delta
         selected_reversed.append(message)
     return list(reversed(selected_reversed))
-
-
-def _fallback_answer(
-    user_message: str,
-    memories: list[RetrievalResult],
-    conversation_history: list[dict] | None = None,
-) -> str:
-    history_hint = ""
-    if conversation_history:
-        recent = conversation_history[-2:]
-        recent_lines = "；".join(f"{item.get('role')}: {item.get('content')}" for item in recent)
-        history_hint = f" 我也会把本次会话历史作为短期上下文；最近上下文：{recent_lines}"
-
-    if not memories:
-        return (
-            f"我还没有检索到可用的长期记忆。针对“{user_message}”，"
-            f"建议先补充相关 Markdown 记忆并重建索引。{history_hint}"
-        )
-
-    memory_lines = "；".join(f"{item.title}: {item.content[:80]}" for item in memories[:3])
-    return (
-        "基于当前检索到的长期记忆，第一版应先完成 Markdown 记忆库、"
-        "SQLite 元数据、Chroma/Embedding 索引、双链扩展和聊天引用来源这个闭环。"
-        f" 相关记忆：{memory_lines}{history_hint}"
-    )
 
 
 def _format_conversation_history(conversation_history: list[dict] | None) -> str:
@@ -275,14 +256,29 @@ def generate_answer(
     conversation_history: list[dict] | None = None,
 ) -> str:
     prompt = build_rag_prompt(user_message, memories, conversation_history)
-    try:
-        if settings.llm_provider == "deepseek" and settings.deepseek_api_key:
+    if settings.llm_provider == "deepseek":
+        if not settings.deepseek_api_key:
+            raise LLMUnavailableError(
+                "DeepSeek API key is not configured. Configure it in Settings or switch to an available Ollama model."
+            )
+        try:
             return _call_deepseek(settings, prompt)
-        if settings.llm_provider == "ollama":
+        except Exception as exc:
+            logger.exception("DeepSeek chat request failed for model %s", settings.deepseek_model)
+            raise LLMUnavailableError(
+                "DeepSeek request failed. Check the API key, model configuration, or service availability, then retry."
+            ) from exc
+
+    if settings.llm_provider == "ollama":
+        try:
             return _call_ollama(settings, prompt)
-    except Exception:
-        return _fallback_answer(user_message, memories, conversation_history)
-    return _fallback_answer(user_message, memories, conversation_history)
+        except Exception as exc:
+            logger.exception("Ollama chat request failed for model %s", settings.ollama_chat_model)
+            raise LLMUnavailableError(
+                "Ollama request failed. Check that the service is running and the configured chat model is installed, then retry."
+            ) from exc
+
+    raise LLMUnavailableError("No supported LLM provider is configured.")
 
 
 def _call_deepseek(settings: AppSettings, prompt: str) -> str:

@@ -18,7 +18,7 @@ from lumina.conversations import (
     update_conversation_pin,
 )
 from lumina.indexer import index_status, rebuild_index
-from lumina.llm import ContextWindowExceededError, generate_answer, select_conversation_history
+from lumina.llm import ContextWindowExceededError, LLMUnavailableError, generate_answer, select_conversation_history
 from lumina.memory.store import create_memory, delete_memory, get_memory, list_memories, scan_vault, update_memory
 from lumina.models import (
     ChatRequest,
@@ -256,9 +256,12 @@ def api_chat(payload: ChatRequest) -> dict:
         conversation_history = select_conversation_history(settings, payload.message, memories, all_history)
     except ContextWindowExceededError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    try:
+        answer = generate_answer(settings, payload.message, memories, conversation_history)
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
     conversation_id = ensure_conversation(vault_root, payload.conversation_id, payload.message[:40])
     add_message(vault_root, conversation_id, "user", payload.message)
-    answer = generate_answer(settings, payload.message, memories, conversation_history)
     add_message(vault_root, conversation_id, "assistant", answer)
     suggestions = generate_suggestions(vault_root, conversation_id, settings=settings)
     response = ChatResponse(

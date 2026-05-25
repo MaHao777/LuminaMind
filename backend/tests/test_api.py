@@ -14,7 +14,7 @@ from lumina.db import db_path
 from lumina.indexer import index_status, load_vectors, rebuild_index as real_rebuild_index
 
 
-def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path) -> None:
+def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "vault"
 
@@ -56,6 +56,11 @@ def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path) -> None:
     first = retrieve_response.json()["results"][0]
     assert first["memory_id"] == memory_id
     assert first["score"] > 0
+    monkeypatch.setattr(
+        main,
+        "generate_answer",
+        lambda settings, user_message, memories, conversation_history: "Markdown memory answer",
+    )
 
     chat_response = client.post(
         "/api/chat",
@@ -168,6 +173,35 @@ def test_chat_persists_messages_lists_conversations_and_injects_history(tmp_path
         "第一轮：项目叫 LuminaMind",
         "answer: 第一轮：项目叫 LuminaMind",
     ]
+
+
+def test_chat_rejects_missing_llm_credentials_without_persisting_messages(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "missing-credentials-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    response = client.post("/api/chat", json={"message": "解释一下 Transformer 中的 Attention"})
+
+    assert response.status_code == 503
+    assert "DeepSeek API key" in response.json()["detail"]
+    assert client.get("/api/conversations").json()["conversations"] == []
+
+
+def test_chat_rejects_failed_llm_request_without_persisting_messages(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "failed-provider-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    AppSettings(vault_path=str(vault_path), deepseek_api_key="test-key").save(vault_path)
+    monkeypatch.setattr(
+        "lumina.llm._call_deepseek",
+        lambda settings, prompt: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+    )
+
+    response = client.post("/api/chat", json={"message": "解释一下 Transformer 中的 Attention"})
+
+    assert response.status_code == 503
+    assert "DeepSeek request failed" in response.json()["detail"]
+    assert client.get("/api/conversations").json()["conversations"] == []
 
 
 def test_chat_auto_generates_pending_memory_suggestions_after_response(tmp_path: Path, monkeypatch) -> None:
