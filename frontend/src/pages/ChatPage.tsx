@@ -1,5 +1,5 @@
-import { Plus, Send, Trash2 } from "lucide-react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { Pin, Plus, Send, Trash2 } from "lucide-react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -9,6 +9,7 @@ import {
   getConversationMessages,
   listConversations,
   sendChat,
+  updateConversation,
   type ConversationSummary,
   type UsedMemory,
 } from "../services/api";
@@ -17,6 +18,21 @@ type Message = {
   role: "user" | "assistant";
   content: string;
 };
+
+type ConversationMenu = {
+  conversation: ConversationSummary;
+  left: number;
+  top: number;
+};
+
+function sortConversations(conversations: ConversationSummary[]) {
+  return [...conversations].sort(
+    (left, right) =>
+      Number(right.pinned) - Number(left.pinned)
+      || right.updated_at.localeCompare(left.updated_at)
+      || right.created_at.localeCompare(left.created_at),
+  );
+}
 
 export function ChatPage() {
   const [conversationId, setConversationId] = useState<string | undefined>();
@@ -28,18 +44,40 @@ export function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [chatError, setChatError] = useState("");
+  const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
   }, [messages, loading, chatError]);
+
+  useEffect(() => {
+    if (!conversationMenu) return undefined;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+
+    function closeOnOutsideClick(event: globalThis.MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setConversationMenu(null);
+    }
+
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setConversationMenu(null);
+    }
+
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [conversationMenu]);
 
   async function refreshConversations(preferredId?: string) {
     const response = await listConversations();
     setConversations((current) => {
       const byId = new Map(current.map((conversation) => [conversation.id, conversation]));
       response.conversations.forEach((conversation) => byId.set(conversation.id, conversation));
-      return Array.from(byId.values()).sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+      return sortConversations(Array.from(byId.values()));
     });
     if (preferredId) {
       setConversationId(preferredId);
@@ -70,7 +108,7 @@ export function ChatPage() {
     setChatError("");
     try {
       const created = await createConversation();
-      setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setConversations((current) => sortConversations([created, ...current.filter((item) => item.id !== created.id)]));
       setConversationId(created.id);
       setMessages([]);
       setUsedMemories([]);
@@ -81,6 +119,7 @@ export function ChatPage() {
   }
 
   async function removeConversation(conversation: ConversationSummary) {
+    setConversationMenu(null);
     const title = conversation.title || "Untitled";
     if (!window.confirm(`Delete conversation "${title}"?`)) return;
     setError("");
@@ -99,9 +138,43 @@ export function ChatPage() {
     }
   }
 
+  async function togglePinned(conversation: ConversationSummary) {
+    setConversationMenu(null);
+    setError("");
+    try {
+      const updated = await updateConversation(conversation.id, !conversation.pinned);
+      setConversations((current) =>
+        sortConversations(current.map((item) => (item.id === updated.id ? updated : item))),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update conversation");
+    }
+  }
+
+  function openConversationMenu(conversation: ConversationSummary, clientX: number, clientY: number) {
+    const menuWidth = 180;
+    const menuHeight = 92;
+    const viewportPadding = 8;
+    const left = Math.max(viewportPadding, Math.min(clientX, window.innerWidth - menuWidth - viewportPadding));
+    const top = Math.max(viewportPadding, Math.min(clientY, window.innerHeight - menuHeight - viewportPadding));
+    setConversationMenu({ conversation, left, top });
+  }
+
+  function handleConversationContextMenu(event: ReactMouseEvent, conversation: ConversationSummary) {
+    event.preventDefault();
+    openConversationMenu(conversation, event.clientX, event.clientY);
+  }
+
+  function handleConversationKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, conversation: ConversationSummary) {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    openConversationMenu(conversation, bounds.left + 12, bounds.bottom);
+  }
+
   useEffect(() => {
     listConversations()
-      .then((response) => setConversations(response.conversations))
+      .then((response) => setConversations(sortConversations(response.conversations)))
       .catch((err: Error) => setError(err.message));
   }, []);
 
@@ -156,22 +229,52 @@ export function ChatPage() {
                   aria-label={conversation.title || "Untitled"}
                   className={conversation.id === conversationId ? "conversation-row active" : "conversation-row"}
                   onClick={() => loadConversation(conversation.id)}
+                  onContextMenu={(event) => handleConversationContextMenu(event, conversation)}
+                  onKeyDown={(event) => handleConversationKeyDown(event, conversation)}
                 >
                   <strong>{conversation.title || "Untitled"}</strong>
+                  {conversation.pinned ? (
+                    <Pin
+                      className="conversation-pin"
+                      size={14}
+                      aria-label={`Pinned ${conversation.title || "Untitled"}`}
+                    />
+                  ) : null}
                   <span>{conversation.message_count} messages</span>
-                </button>
-                <button
-                  type="button"
-                  className="icon-button danger-button"
-                  aria-label={`Delete ${conversation.title || "Untitled"}`}
-                  onClick={() => removeConversation(conversation)}
-                >
-                  <Trash2 size={15} aria-hidden />
                 </button>
               </div>
             ))}
           </div>
         )}
+        {conversationMenu ? (
+          <div
+            ref={menuRef}
+            role="menu"
+            className="conversation-menu"
+            aria-label="Conversation actions"
+            style={{ left: conversationMenu.left, top: conversationMenu.top }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              aria-label={`${conversationMenu.conversation.pinned ? "Unpin" : "Pin"} ${conversationMenu.conversation.title || "Untitled"}`}
+              onClick={() => togglePinned(conversationMenu.conversation)}
+            >
+              <Pin size={15} aria-hidden />
+              {conversationMenu.conversation.pinned ? "Unpin" : "Pin"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="danger-menu-item"
+              aria-label={`Delete ${conversationMenu.conversation.title || "Untitled"}`}
+              onClick={() => removeConversation(conversationMenu.conversation)}
+            >
+              <Trash2 size={15} aria-hidden />
+              Delete
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <section className="panel chat-panel" aria-label="Agent conversation">

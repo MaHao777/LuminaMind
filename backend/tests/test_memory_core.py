@@ -1,7 +1,10 @@
 from pathlib import Path
 
+import pytest
+
 from lumina.config import AppSettings
 from lumina.indexer import rebuild_index
+from lumina.llm import _call_deepseek, _call_ollama
 from lumina.memory.markdown import build_markdown, parse_markdown_note
 from lumina.memory.store import create_memory, list_memories, scan_vault
 from lumina.retrieval import retrieve_memories
@@ -137,3 +140,51 @@ def test_settings_roundtrip_prefers_vault_config(tmp_path: Path) -> None:
     assert loaded.llm_provider == "ollama"
     assert loaded.ollama_chat_model == "qwen2.5:7b"
     assert loaded.deepseek_api_key == "test-key"
+
+
+def test_settings_resolve_context_defaults_and_reject_oversubscribed_output() -> None:
+    assert AppSettings(deepseek_model="deepseek-chat").effective_chat_context_window_tokens() == 1_000_000
+    assert AppSettings(llm_provider="ollama").effective_chat_context_window_tokens() == 32_768
+    assert (
+        AppSettings(chat_context_window_tokens=65_536, chat_max_output_tokens=2_048)
+        .effective_chat_context_window_tokens()
+        == 65_536
+    )
+
+    with pytest.raises(ValueError, match="chat_max_output_tokens"):
+        AppSettings(llm_provider="ollama", chat_context_window_tokens=16_384, chat_max_output_tokens=15_360)
+
+
+def test_provider_requests_apply_configured_context_limits(monkeypatch) -> None:
+    payloads: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": "deepseek"}}], "message": {"content": "ollama"}}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, **kwargs) -> FakeResponse:
+            payloads.append(kwargs["json"])
+            return FakeResponse()
+
+    monkeypatch.setattr("lumina.llm.httpx.Client", FakeClient)
+
+    deepseek = AppSettings(deepseek_api_key="key", chat_context_window_tokens=16_384, chat_max_output_tokens=2_048)
+    ollama = AppSettings(llm_provider="ollama", chat_context_window_tokens=16_384, chat_max_output_tokens=2_048)
+    assert _call_deepseek(deepseek, "prompt") == "deepseek"
+    assert _call_ollama(ollama, "prompt") == "ollama"
+
+    assert payloads[0]["max_tokens"] == 2_048
+    assert payloads[1]["options"] == {"num_ctx": 16_384, "num_predict": 2_048}

@@ -10,6 +10,8 @@ export type AppSettings = {
   ollama_chat_model: string;
   ollama_embedding_model: string;
   embedding_fallback_to_local?: boolean;
+  chat_context_window_tokens: number | null;
+  chat_max_output_tokens: number;
 };
 
 export type MemoryNote = {
@@ -59,6 +61,7 @@ export type ConversationSummary = {
   created_at: string;
   updated_at: string;
   message_count: number;
+  pinned: boolean;
 };
 
 export type ChatMessage = {
@@ -174,6 +177,13 @@ export function createConversation(title = "New conversation") {
 
 export function deleteConversation(id: string) {
   return request<{ deleted: boolean }>(`/api/conversations/${id}`, { method: "DELETE" });
+}
+
+export function updateConversation(id: string, pinned: boolean) {
+  return request<ConversationSummary>(`/api/conversations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned }),
+  });
 }
 
 export function getConversationMessages(conversationId: string) {

@@ -30,6 +30,8 @@ vi.mock("../services/api", () => ({
     ollama_base_url: "http://127.0.0.1:11434",
     ollama_chat_model: "qwen2.5:7b",
     ollama_embedding_model: "bge-m3",
+    chat_context_window_tokens: null,
+    chat_max_output_tokens: 8192,
   })),
   saveSettings: vi.fn(async (payload) => payload),
   selectVault: vi.fn(async (path: string) => ({ path })),
@@ -45,6 +47,7 @@ vi.mock("../services/api", () => ({
         created_at: "2026-05-23T10:00:00",
         updated_at: "2026-05-23T10:01:00",
         message_count: 2,
+        pinned: false,
       },
     ],
   })),
@@ -54,6 +57,15 @@ vi.mock("../services/api", () => ({
     created_at: "2026-05-23T10:02:00",
     updated_at: "2026-05-23T10:02:00",
     message_count: 0,
+    pinned: false,
+  })),
+  updateConversation: vi.fn(async (id: string, pinned: boolean) => ({
+    id,
+    title: "Project planning",
+    created_at: "2026-05-23T10:00:00",
+    updated_at: "2026-05-23T10:01:00",
+    message_count: 2,
+    pinned,
   })),
   deleteConversation: vi.fn(async () => ({ deleted: true })),
   getConversationMessages: vi.fn(async () => ({
@@ -125,9 +137,21 @@ describe("LuminaMind MVP frontend", () => {
     expect(await screen.findByDisplayValue("D:/memory")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("LLM Provider"), { target: { value: "ollama" } });
+    fireEvent.change(screen.getByLabelText("Chat context window tokens (blank for automatic)"), {
+      target: { value: "65536" },
+    });
+    fireEvent.change(screen.getByLabelText("Max response tokens"), { target: { value: "4096" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
-    await waitFor(() => expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ llm_provider: "ollama" })));
+    await waitFor(() =>
+      expect(api.saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          llm_provider: "ollama",
+          chat_context_window_tokens: 65536,
+          chat_max_output_tokens: 4096,
+        }),
+      ),
+    );
   });
 
   it("loads memories and shows selected markdown content", async () => {
@@ -307,13 +331,65 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.queryByText("之前讨论过 LuminaMind")).not.toBeInTheDocument();
   });
 
-  it("confirms and deletes the current saved conversation", async () => {
+  it("opens the keyboard conversation menu, pins a chat, and dismisses the menu", async () => {
+    vi.mocked(api.listConversations).mockResolvedValueOnce({
+      conversations: [
+        {
+          id: "conv_recent",
+          title: "Most recent",
+          created_at: "2026-05-23T10:03:00",
+          updated_at: "2026-05-23T10:03:00",
+          message_count: 1,
+          pinned: false,
+        },
+        {
+          id: "conv_saved",
+          title: "Project planning",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:01:00",
+          message_count: 2,
+          pinned: false,
+        },
+      ],
+    });
+    vi.mocked(api.updateConversation).mockResolvedValueOnce({
+      id: "conv_saved",
+      title: "Project planning",
+      created_at: "2026-05-23T10:00:00",
+      updated_at: "2026-05-23T10:01:00",
+      message_count: 2,
+      pinned: true,
+    });
+    const { container } = render(<App />);
+
+    const conversation = await screen.findByRole("button", { name: "Project planning" });
+    fireEvent.keyDown(conversation, { key: "F10", shiftKey: true });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Pin Project planning" }));
+
+    await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("conv_saved", true));
+    expect(screen.getByLabelText("Pinned Project planning")).toBeInTheDocument();
+    expect(container.querySelector(".conversation-row strong")?.textContent).toBe("Project planning");
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Project planning" }), { clientX: 10, clientY: 10 });
+    expect(await screen.findByRole("menuitem", { name: "Unpin Project planning" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Project planning" }), { clientX: 10, clientY: 10 });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("confirms and deletes the current saved conversation from its context menu", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Project planning" }));
     expect(await screen.findByText("之前讨论过 LuminaMind")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Delete Project planning" }));
+    expect(screen.queryByRole("button", { name: "Delete Project planning" })).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Project planning" }), { clientX: 10, clientY: 10 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete Project planning" }));
 
     await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith("conv_saved"));
     expect(confirm).toHaveBeenCalled();

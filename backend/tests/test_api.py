@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import sqlite3
 from threading import Event, Lock
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,9 @@ from fastapi.testclient import TestClient
 import main
 import lumina.suggestions as suggestions_module
 from main import app
+from lumina.config import AppSettings
+from lumina.conversations import add_message
+from lumina.db import db_path
 from lumina.indexer import index_status, load_vectors, rebuild_index as real_rebuild_index
 
 
@@ -301,6 +305,112 @@ def test_delete_conversation_removes_messages_and_suggestions_but_keeps_accepted
     assert all(item["conversation_id"] != conversation_id for item in suggestions)
     memories = client.get("/api/memories").json()["memories"]
     assert any(item["title"] == suggestion["title"] for item in memories)
+
+
+def test_legacy_conversations_are_migrated_and_pinned_threads_sort_first(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "legacy-chat-vault"
+    database_path = db_path(vault_path)
+    database_path.parent.mkdir(parents=True)
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            "CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("conv_old", "Pinned older", "2026-05-22T10:00:00", "2026-05-22T10:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("conv_new", "Newer regular", "2026-05-23T10:00:00", "2026-05-23T10:00:00"),
+        )
+
+    assert client.post("/api/vault/select", json={"path": str(vault_path)}).status_code == 200
+    pinned = client.patch("/api/conversations/conv_old", json={"pinned": True})
+    assert pinned.status_code == 200
+    assert pinned.json()["pinned"] is True
+
+    listed = client.get("/api/conversations").json()["conversations"]
+    assert [(conversation["id"], conversation["pinned"]) for conversation in listed] == [
+        ("conv_old", True),
+        ("conv_new", False),
+    ]
+
+    unpinned = client.patch("/api/conversations/conv_old", json={"pinned": False})
+    assert unpinned.json()["pinned"] is False
+    assert [conversation["id"] for conversation in client.get("/api/conversations").json()["conversations"]] == [
+        "conv_new",
+        "conv_old",
+    ]
+
+
+def test_chat_includes_history_beyond_twelve_messages_when_budget_allows(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "long-context-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    created = client.post("/api/conversations", json={"title": "Long context"}).json()
+    existing: list[str] = []
+    for index in range(14):
+        content = f"prior-message-{index}"
+        existing.append(content)
+        add_message(vault_path, created["id"], "user" if index % 2 == 0 else "assistant", content)
+
+    captured_history: list[list[dict]] = []
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: captured_history.append(history) or "answer")
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    response = client.post("/api/chat", json={"conversation_id": created["id"], "message": "continue"})
+
+    assert response.status_code == 200
+    assert [message["content"] for message in captured_history[0]] == existing
+
+
+def test_chat_context_budget_drops_only_the_oldest_history(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "bounded-context-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    AppSettings(
+        vault_path=str(vault_path),
+        llm_provider="ollama",
+        chat_context_window_tokens=16_384,
+        chat_max_output_tokens=8_192,
+    ).save(vault_path)
+    created = client.post("/api/conversations", json={"title": "Bounded context"}).json()
+    existing: list[str] = []
+    for index in range(12):
+        content = f"message-{index}-" + ("x" * 2_000)
+        existing.append(content)
+        add_message(vault_path, created["id"], "user" if index % 2 == 0 else "assistant", content)
+
+    captured_history: list[list[dict]] = []
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: captured_history.append(history) or "answer")
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    response = client.post("/api/chat", json={"conversation_id": created["id"], "message": "continue"})
+
+    assert response.status_code == 200
+    selected = [message["content"] for message in captured_history[0]]
+    assert 0 < len(selected) < len(existing)
+    assert selected == existing[-len(selected) :]
+
+
+def test_chat_rejects_fixed_prompt_that_exceeds_context_without_persisting_messages(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "overflow-context-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    AppSettings(
+        vault_path=str(vault_path),
+        llm_provider="ollama",
+        chat_context_window_tokens=16_384,
+        chat_max_output_tokens=8_192,
+    ).save(vault_path)
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    response = client.post("/api/chat", json={"message": "x" * 8_000})
+
+    assert response.status_code == 422
+    assert "context window" in response.json()["detail"].lower()
+    assert client.get("/api/conversations").json()["conversations"] == []
 
 
 def test_accepting_suggestion_twice_creates_one_memory_and_reject_cannot_override_it(tmp_path: Path) -> None:

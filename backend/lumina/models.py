@@ -88,12 +88,17 @@ class ConversationCreate(BaseModel):
     title: str = "New conversation"
 
 
+class ConversationUpdate(BaseModel):
+    pinned: bool
+
+
 class ConversationSummary(BaseModel):
     id: str
     title: str = "Untitled"
     created_at: str = ""
     updated_at: str = ""
     message_count: int = 0
+    pinned: bool = False
 
 
 class ChatMessage(BaseModel):

@@ -232,17 +232,16 @@ p {
 }
 
 .conversation-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
-  align-items: center;
-  gap: 6px;
+  position: relative;
 }
 
 .conversation-row {
+  position: relative;
   display: grid;
   justify-content: stretch;
   width: 100%;
   min-height: 58px;
+  padding-right: 30px;
   color: #1d2329;
   text-align: left;
 }
@@ -257,6 +256,45 @@ p {
 .conversation-row span {
   color: #66737f;
   font-size: 12px;
+}
+
+.conversation-pin {
+  position: absolute;
+  top: 11px;
+  right: 10px;
+  color: #6b7884;
+}
+
+.conversation-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  width: 180px;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid #d1d9e0;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgb(29 35 41 / 14%);
+}
+
+.conversation-menu button {
+  justify-content: flex-start;
+  min-height: 36px;
+  padding: 0 10px;
+  border-color: transparent;
+  background: transparent;
+  color: #283541;
+}
+
+.conversation-menu button:hover,
+.conversation-menu button:focus-visible {
+  border-color: #d6dee6;
+  background: #eef3f7;
+}
+
+.conversation-menu .danger-menu-item {
+  color: #8a2f26;
 }
 
 .conversation-row.active,

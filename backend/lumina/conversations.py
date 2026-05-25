@@ -53,11 +53,12 @@ def list_conversations(vault_root: Path) -> list[ConversationSummary]:
                 conversations.title,
                 conversations.created_at,
                 conversations.updated_at,
+                conversations.pinned,
                 COUNT(messages.id) AS message_count
             FROM conversations
             LEFT JOIN messages ON messages.conversation_id = conversations.id
-            GROUP BY conversations.id
-            ORDER BY conversations.updated_at DESC, conversations.created_at DESC
+            GROUP BY conversations.id, conversations.pinned
+            ORDER BY conversations.pinned DESC, conversations.updated_at DESC, conversations.created_at DESC
             """
         ).fetchall()
     return [_row_to_conversation(row) for row in rows]
@@ -72,11 +73,12 @@ def get_conversation(vault_root: Path, conversation_id: str) -> ConversationSumm
                 conversations.title,
                 conversations.created_at,
                 conversations.updated_at,
+                conversations.pinned,
                 COUNT(messages.id) AS message_count
             FROM conversations
             LEFT JOIN messages ON messages.conversation_id = conversations.id
             WHERE conversations.id = ?
-            GROUP BY conversations.id
+            GROUP BY conversations.id, conversations.pinned
             """,
             (conversation_id,),
         ).fetchone()
@@ -92,7 +94,19 @@ def _row_to_conversation(row) -> ConversationSummary:
         created_at=row["created_at"] or "",
         updated_at=row["updated_at"] or "",
         message_count=row["message_count"] or 0,
+        pinned=bool(row["pinned"]),
     )
+
+
+def update_conversation_pin(vault_root: Path, conversation_id: str, pinned: bool) -> ConversationSummary:
+    with connect(vault_root) as conn:
+        updated = conn.execute(
+            "UPDATE conversations SET pinned = ? WHERE id = ?",
+            (int(pinned), conversation_id),
+        )
+        if updated.rowcount == 0:
+            raise KeyError(conversation_id)
+    return get_conversation(vault_root, conversation_id)
 
 
 def add_message(vault_root: Path, conversation_id: str, role: str, content: str) -> None:

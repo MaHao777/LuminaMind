@@ -5,8 +5,49 @@ import re
 
 import httpx
 
-from .config import AppSettings
+from .config import CHAT_CONTEXT_SAFETY_TOKENS, AppSettings
 from .models import RetrievalResult
+
+
+MESSAGE_OVERHEAD_TOKENS = 16
+
+
+class ContextWindowExceededError(ValueError):
+    pass
+
+
+def estimate_prompt_tokens(prompt: str) -> int:
+    """Conservatively treat each UTF-8 byte as a token budget unit."""
+    return len(prompt.encode("utf-8")) + MESSAGE_OVERHEAD_TOKENS
+
+
+def select_conversation_history(
+    settings: AppSettings,
+    user_message: str,
+    memories: list[RetrievalResult],
+    conversation_history: list[dict] | None,
+) -> list[dict]:
+    input_budget = (
+        settings.effective_chat_context_window_tokens()
+        - settings.chat_max_output_tokens
+        - CHAT_CONTEXT_SAFETY_TOKENS
+    )
+    prompt_tokens = estimate_prompt_tokens(build_rag_prompt(user_message, memories, []))
+    if prompt_tokens > input_budget:
+        raise ContextWindowExceededError(
+            "Chat input exceeds the configured context window before conversation history can be included."
+        )
+
+    empty_history_bytes = len(_format_conversation_history([]).encode("utf-8"))
+    selected_reversed: list[dict] = []
+    for message in reversed(conversation_history or []):
+        line_bytes = len(_format_conversation_history([message]).encode("utf-8"))
+        history_delta = line_bytes - empty_history_bytes if not selected_reversed else line_bytes + 1
+        if prompt_tokens + history_delta > input_budget:
+            break
+        prompt_tokens += history_delta
+        selected_reversed.append(message)
+    return list(reversed(selected_reversed))
 
 
 def _fallback_answer(
@@ -39,7 +80,7 @@ def _format_conversation_history(conversation_history: list[dict] | None) -> str
         return "无"
     return "\n".join(
         f"{message.get('role', 'unknown')}: {message.get('content', '')}"
-        for message in conversation_history[-12:]
+        for message in conversation_history
     )
 
 
@@ -253,6 +294,7 @@ def _call_deepseek(settings: AppSettings, prompt: str) -> str:
                 "model": settings.deepseek_model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
+                "max_tokens": settings.chat_max_output_tokens,
             },
         )
         response.raise_for_status()
@@ -267,6 +309,10 @@ def _call_ollama(settings: AppSettings, prompt: str) -> str:
                 "model": settings.ollama_chat_model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
+                "options": {
+                    "num_ctx": settings.effective_chat_context_window_tokens(),
+                    "num_predict": settings.chat_max_output_tokens,
+                },
             },
         )
         response.raise_for_status()

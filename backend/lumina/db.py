@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     title TEXT,
     created_at TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    pinned INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -101,4 +102,8 @@ def connect(vault_root: Path) -> sqlite3.Connection:
 def initialize_database(vault_root: Path) -> None:
     with connect(vault_root) as conn:
         conn.executescript(SCHEMA)
-
+        conversation_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        if "pinned" not in conversation_columns:
+            conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")

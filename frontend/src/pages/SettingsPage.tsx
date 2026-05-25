@@ -13,6 +13,8 @@ const emptySettings: AppSettings = {
   ollama_chat_model: "qwen2.5:7b",
   ollama_embedding_model: "bge-m3",
   embedding_fallback_to_local: true,
+  chat_context_window_tokens: null,
+  chat_max_output_tokens: 8192,
 };
 
 type Props = {
@@ -35,6 +37,15 @@ export function SettingsPage({ settings, onSettingsChange }: Props) {
 
   function updateText(key: keyof AppSettings) {
     return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => update(key, event.target.value as never);
+  }
+
+  function updateContextWindow(event: ChangeEvent<HTMLInputElement>) {
+    const value = event.target.value.trim();
+    update("chat_context_window_tokens", value ? Number(value) : null);
+  }
+
+  function updateMaxOutputTokens(event: ChangeEvent<HTMLInputElement>) {
+    update("chat_max_output_tokens", Number(event.target.value));
   }
 
   async function save() {
@@ -110,6 +121,20 @@ export function SettingsPage({ settings, onSettingsChange }: Props) {
           <label>
             Ollama embedding model
             <input value={form.ollama_embedding_model} onChange={updateText("ollama_embedding_model")} />
+          </label>
+          <label>
+            Chat context window tokens (blank for automatic)
+            <input
+              type="number"
+              min={16384}
+              value={form.chat_context_window_tokens ?? ""}
+              onChange={updateContextWindow}
+              placeholder="Automatic"
+            />
+          </label>
+          <label>
+            Max response tokens
+            <input type="number" min={1} value={form.chat_max_output_tokens} onChange={updateMaxOutputTokens} />
           </label>
           <button type="button" onClick={save}>
             <Save size={16} aria-hidden />
