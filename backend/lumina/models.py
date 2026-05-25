@@ -110,12 +110,6 @@ class UsedMemory(BaseModel):
     score: float
 
 
-class ChatResponse(BaseModel):
-    conversation_id: str
-    answer: str
-    used_memories: list[UsedMemory]
-
-
 class MemorySuggestion(BaseModel):
     id: str
     conversation_id: str | None = None
@@ -131,6 +125,13 @@ class MemorySuggestion(BaseModel):
     status: SuggestionStatus = "pending"
     created_at: str = ""
     updated_at: str = ""
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    answer: str
+    used_memories: list[UsedMemory]
+    memory_suggestions: list[MemorySuggestion] = Field(default_factory=list)
 
 
 class GenerateSuggestionsRequest(BaseModel):

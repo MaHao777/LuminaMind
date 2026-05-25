@@ -50,6 +50,7 @@ export type ChatResponse = {
   conversation_id?: string;
   answer: string;
   used_memories: UsedMemory[];
+  memory_suggestions: MemorySuggestion[];
 };
 
 export type ConversationSummary = {

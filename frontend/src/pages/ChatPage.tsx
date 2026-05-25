@@ -20,6 +20,7 @@ export function ChatPage() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [usedMemories, setUsedMemories] = useState<UsedMemory[]>([]);
+  const [suggestionCount, setSuggestionCount] = useState(0);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -40,6 +41,7 @@ export function ChatPage() {
     setError("");
     setConversationId(nextId);
     setUsedMemories([]);
+    setSuggestionCount(0);
     try {
       const response = await getConversationMessages(nextId);
       setMessages(
@@ -61,6 +63,7 @@ export function ChatPage() {
       setConversationId(created.id);
       setMessages([]);
       setUsedMemories([]);
+      setSuggestionCount(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create conversation");
     }
@@ -81,12 +84,14 @@ export function ChatPage() {
     setMessages((current) => [...current, { role: "user", content: text }]);
     setLoading(true);
     setError("");
+    setSuggestionCount(0);
 
     try {
       const response = await sendChat(text, conversationId);
       setConversationId(response.conversation_id);
       setMessages((current) => [...current, { role: "assistant", content: response.answer }]);
       setUsedMemories(response.used_memories);
+      setSuggestionCount(response.memory_suggestions?.length ?? 0);
       await refreshConversations(response.conversation_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat failed");
@@ -139,6 +144,11 @@ export function ChatPage() {
         </div>
 
         {error ? <div className="banner error">{error}</div> : null}
+        {suggestionCount > 0 ? (
+          <div className="banner success">
+            {suggestionCount} memory suggestion{suggestionCount === 1 ? "" : "s"} ready for review.
+          </div>
+        ) : null}
 
         <form className="composer" onSubmit={handleSubmit}>
           <input

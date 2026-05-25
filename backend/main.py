@@ -44,6 +44,7 @@ app = FastAPI(title="LuminaMind Agent")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,6 +55,15 @@ def require_vault() -> Path:
     if state.vault_root is None:
         raise HTTPException(status_code=400, detail="Vault is not selected")
     return state.vault_root
+
+
+def ensure_chat_memory_index(vault_root: Path, settings: AppSettings) -> None:
+    status = index_status(vault_root)
+    if status["indexed_notes"] == 0:
+        scan_vault(vault_root)
+        status = index_status(vault_root)
+    if status["indexed_notes"] > 0 and status["indexed_chunks"] == 0:
+        rebuild_index(vault_root, settings=settings)
 
 
 @app.get("/api/settings")
@@ -211,12 +221,15 @@ def api_get_conversation_messages(conversation_id: str) -> dict:
 @app.post("/api/chat")
 def api_chat(payload: ChatRequest) -> dict:
     vault_root = require_vault()
+    settings = AppSettings.load(vault_root)
+    ensure_chat_memory_index(vault_root, settings)
     conversation_id = ensure_conversation(vault_root, payload.conversation_id, payload.message[:40])
     conversation_history = load_messages(vault_root, conversation_id, limit=12)
     add_message(vault_root, conversation_id, "user", payload.message)
-    memories = retrieve_memories(vault_root, payload.message, settings=AppSettings.load(vault_root))
-    answer = generate_answer(AppSettings.load(vault_root), payload.message, memories, conversation_history)
+    memories = retrieve_memories(vault_root, payload.message, settings=settings)
+    answer = generate_answer(settings, payload.message, memories, conversation_history)
     add_message(vault_root, conversation_id, "assistant", answer)
+    suggestions = generate_suggestions(vault_root, conversation_id, settings=settings)
     response = ChatResponse(
         conversation_id=conversation_id,
         answer=answer,
@@ -224,6 +237,7 @@ def api_chat(payload: ChatRequest) -> dict:
             UsedMemory(memory_id=memory.memory_id, title=memory.title, score=memory.score)
             for memory in memories[:8]
         ],
+        memory_suggestions=suggestions,
     )
     return response.model_dump()
 
@@ -231,7 +245,8 @@ def api_chat(payload: ChatRequest) -> dict:
 @app.post("/api/memory-suggestions/generate")
 def api_generate_suggestions(payload: GenerateSuggestionsRequest | None = None) -> dict:
     conversation_id = payload.conversation_id if payload else None
-    suggestions = generate_suggestions(require_vault(), conversation_id)
+    vault_root = require_vault()
+    suggestions = generate_suggestions(vault_root, conversation_id, settings=AppSettings.load(vault_root))
     return {"suggestions": [suggestion.model_dump() for suggestion in suggestions]}
 
 
@@ -242,7 +257,8 @@ def api_list_suggestions() -> dict:
 
 @app.post("/api/memory-suggestions/{suggestion_id}/accept")
 def api_accept_suggestion(suggestion_id: str) -> dict:
-    return accept_suggestion(require_vault(), suggestion_id).model_dump()
+    vault_root = require_vault()
+    return accept_suggestion(vault_root, suggestion_id, settings=AppSettings.load(vault_root)).model_dump()
 
 
 @app.post("/api/memory-suggestions/{suggestion_id}/reject")
@@ -253,9 +269,10 @@ def api_reject_suggestion(suggestion_id: str) -> dict:
 @app.post("/api/memory-suggestions/{suggestion_id}/edit")
 def api_edit_suggestion(suggestion_id: str, payload: MemoryCreate) -> dict:
     # MVP: editing applies the supplied content by creating a replacement pending suggestion.
-    rejected = update_suggestion_status(require_vault(), suggestion_id, "rejected")
+    vault_root = require_vault()
+    rejected = update_suggestion_status(vault_root, suggestion_id, "rejected")
     created = create_memory(
-        require_vault(),
+        vault_root,
         title=payload.title,
         content=payload.content,
         note_type=payload.type,
@@ -265,4 +282,5 @@ def api_edit_suggestion(suggestion_id: str, payload: MemoryCreate) -> dict:
         source=payload.source,
         links=payload.links,
     )
+    rebuild_index(vault_root, settings=AppSettings.load(vault_root))
     return {"previous": rejected.model_dump(), "memory": created.model_dump()}

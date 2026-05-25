@@ -76,6 +76,22 @@ vi.mock("../services/api", () => ({
     conversation_id: "conv_saved",
     answer: "第一版先完成 Markdown 记忆库和混合检索闭环。",
     used_memories: [{ memory_id: "mem_1", title: "LuminaMind 技术路线", score: 0.91 }],
+    memory_suggestions: [
+      {
+        id: "sug_auto",
+        conversation_id: "conv_saved",
+        action: "create",
+        title: "自动候选记忆",
+        content: "用户正在推进 LuminaMind。",
+        type: "project",
+        tags: ["LuminaMind"],
+        importance: 4,
+        confidence: 0.8,
+        target_note_id: null,
+        reason: "对后续回答有帮助",
+        status: "pending",
+      },
+    ],
   })),
   listSuggestions: vi.fn(async () => ({
     suggestions: [
@@ -131,6 +147,7 @@ describe("LuminaMind MVP frontend", () => {
 
     expect(await screen.findByText("第一版先完成 Markdown 记忆库和混合检索闭环。")).toBeInTheDocument();
     expect(screen.getByText("LuminaMind 技术路线")).toBeInTheDocument();
+    expect(screen.getByText("1 memory suggestion ready for review.")).toBeInTheDocument();
   });
 
   it("loads saved conversations and can start a new chat", async () => {

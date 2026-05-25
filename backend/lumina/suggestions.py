@@ -5,10 +5,14 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .config import AppSettings
 from .conversations import load_messages
 from .db import connect
-from .memory.store import create_memory
+from .indexer import rebuild_index
+from .llm import generate_memory_suggestion_drafts
+from .memory.store import create_memory, get_memory, update_memory
 from .models import MemorySuggestion
+from .retrieval import retrieve_memories
 
 
 def _row_to_suggestion(row) -> MemorySuggestion:
@@ -74,7 +78,65 @@ def create_suggestion(
     return get_suggestion(vault_root, suggestion_id)
 
 
-def generate_suggestions(vault_root: Path, conversation_id: str | None = None) -> list[MemorySuggestion]:
+def _fallback_draft(messages: list[dict]) -> dict:
+    last_user = next((message for message in reversed(messages) if message["role"] == "user"), messages[-1])
+    title = last_user["content"].strip().replace("\n", " ")[:32] or "对话摘要"
+    content = "\n".join(f"{message['role']}: {message['content']}" for message in messages[-6:])
+    return {
+        "action": "create",
+        "title": f"对话记忆：{title}",
+        "type": "log",
+        "content": content,
+        "tags": ["对话", "LuminaMind"],
+        "importance": 3,
+        "confidence": 0.8,
+        "target_note_id": None,
+        "reason": "对话中包含可能影响后续回答的项目上下文，需由用户审查确认。",
+    }
+
+
+def _suggestion_query(messages: list[dict]) -> str:
+    return "\n".join(message["content"] for message in messages[-6:])
+
+
+def _find_existing_pending(
+    vault_root: Path,
+    *,
+    conversation_id: str | None,
+    action: str,
+    title: str,
+    content: str,
+) -> MemorySuggestion | None:
+    with connect(vault_root) as conn:
+        if conversation_id is None:
+            row = conn.execute(
+                """
+                SELECT * FROM memory_suggestions
+                WHERE conversation_id IS NULL AND action = ? AND title = ? AND content = ? AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (action, title, content),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT * FROM memory_suggestions
+                WHERE conversation_id = ? AND action = ? AND title = ? AND content = ? AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (conversation_id, action, title, content),
+            ).fetchone()
+    return _row_to_suggestion(row) if row else None
+
+
+def generate_suggestions(
+    vault_root: Path,
+    conversation_id: str | None = None,
+    settings: AppSettings | None = None,
+) -> list[MemorySuggestion]:
+    settings = settings or AppSettings.load(vault_root)
     messages = load_messages(vault_root, conversation_id)
     useful = [message for message in messages if message["role"] in {"user", "assistant"}]
     if not useful:
@@ -88,20 +150,47 @@ def generate_suggestions(vault_root: Path, conversation_id: str | None = None) -
         )
         return [suggestion]
 
-    last_user = next((message for message in reversed(useful) if message["role"] == "user"), useful[-1])
-    title = last_user["content"].strip().replace("\n", " ")[:32] or "对话摘要"
-    content = "\n".join(f"{message['role']}: {message['content']}" for message in useful[-6:])
-    suggestion = create_suggestion(
+    related_memories = retrieve_memories(
         vault_root,
-        conversation_id=conversation_id,
-        title=f"对话记忆：{title}",
-        content=content,
-        tags=["对话", "LuminaMind"],
-        importance=3,
-        confidence=0.8,
-        reason="对话中包含可能影响后续回答的项目上下文，需由用户审查确认。",
+        _suggestion_query(useful),
+        top_k=5,
+        include_graph_expand=True,
+        settings=settings,
     )
-    return [suggestion]
+    drafts = generate_memory_suggestion_drafts(settings, useful[-12:], related_memories)
+    if not drafts:
+        drafts = [_fallback_draft(useful)]
+
+    suggestions: list[MemorySuggestion] = []
+    for draft in drafts:
+        if draft["action"] == "ignore":
+            continue
+        existing = _find_existing_pending(
+            vault_root,
+            conversation_id=conversation_id,
+            action=draft["action"],
+            title=draft["title"],
+            content=draft["content"],
+        )
+        if existing is not None:
+            suggestions.append(existing)
+            continue
+        suggestions.append(
+            create_suggestion(
+                vault_root,
+                conversation_id=conversation_id,
+                title=draft["title"],
+                content=draft["content"],
+                action=draft["action"],
+                note_type=draft["type"],
+                tags=draft["tags"],
+                importance=draft["importance"],
+                confidence=draft["confidence"],
+                reason=draft["reason"],
+                target_note_id=draft["target_note_id"],
+            )
+        )
+    return suggestions
 
 
 def list_suggestions(vault_root: Path) -> list[MemorySuggestion]:
@@ -128,8 +217,13 @@ def update_suggestion_status(vault_root: Path, suggestion_id: str, status: str) 
     return get_suggestion(vault_root, suggestion_id)
 
 
-def accept_suggestion(vault_root: Path, suggestion_id: str) -> MemorySuggestion:
+def accept_suggestion(
+    vault_root: Path,
+    suggestion_id: str,
+    settings: AppSettings | None = None,
+) -> MemorySuggestion:
     suggestion = get_suggestion(vault_root, suggestion_id)
+    should_rebuild = False
     if suggestion.action == "create":
         create_memory(
             vault_root,
@@ -141,5 +235,41 @@ def accept_suggestion(vault_root: Path, suggestion_id: str) -> MemorySuggestion:
             confidence=suggestion.confidence,
             source="chat",
         )
+        should_rebuild = True
+    elif suggestion.action == "update" and suggestion.target_note_id:
+        current = get_memory(vault_root, suggestion.target_note_id)
+        if current is not None:
+            update_memory(
+                vault_root,
+                suggestion.target_note_id,
+                title=suggestion.title or current.title,
+                content=suggestion.content,
+                note_type=suggestion.type or current.type,
+                tags=suggestion.tags or current.tags,
+                importance=suggestion.importance,
+                confidence=suggestion.confidence,
+                source="chat",
+                status=current.status,
+                links=current.links,
+            )
+            should_rebuild = True
+    elif suggestion.action == "archive" and suggestion.target_note_id:
+        current = get_memory(vault_root, suggestion.target_note_id)
+        if current is not None:
+            update_memory(
+                vault_root,
+                suggestion.target_note_id,
+                title=current.title,
+                content=current.content,
+                note_type=current.type,
+                tags=current.tags,
+                importance=current.importance,
+                confidence=current.confidence,
+                source=current.source,
+                status="archived",
+                links=current.links,
+            )
+            should_rebuild = True
+    if should_rebuild:
+        rebuild_index(vault_root, settings=settings or AppSettings.load(vault_root))
     return update_suggestion_status(vault_root, suggestion_id, "accepted")
-
