@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 MemoryType = Literal["profile", "project", "concept", "task", "log"]
 MemoryStatus = Literal["active", "outdated", "archived"]
 SuggestionAction = Literal["create", "update", "archive", "ignore"]
-SuggestionStatus = Literal["pending", "accepted", "rejected"]
+SuggestionStatus = Literal["pending", "processing", "accepted", "rejected"]
 
 
 class MemoryNote(BaseModel):

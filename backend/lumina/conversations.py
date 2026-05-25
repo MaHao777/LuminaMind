@@ -34,6 +34,16 @@ def create_conversation(vault_root: Path, title: str = "New conversation") -> Co
     return get_conversation(vault_root, conv_id)
 
 
+def delete_conversation(vault_root: Path, conversation_id: str) -> bool:
+    with connect(vault_root) as conn:
+        row = conn.execute("SELECT id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM memory_suggestions WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    return True
+
+
 def list_conversations(vault_root: Path) -> list[ConversationSummary]:
     with connect(vault_root) as conn:
         rows = conn.execute(

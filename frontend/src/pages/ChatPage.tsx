@@ -1,8 +1,9 @@
-import { Plus, Send } from "lucide-react";
+import { Plus, Send, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import {
   createConversation,
+  deleteConversation,
   getConversationMessages,
   listConversations,
   sendChat,
@@ -69,6 +70,24 @@ export function ChatPage() {
     }
   }
 
+  async function removeConversation(conversation: ConversationSummary) {
+    const title = conversation.title || "Untitled";
+    if (!window.confirm(`Delete conversation "${title}"?`)) return;
+    setError("");
+    try {
+      await deleteConversation(conversation.id);
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      if (conversationId === conversation.id) {
+        setConversationId(undefined);
+        setMessages([]);
+        setUsedMemories([]);
+        setSuggestionCount(0);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete conversation");
+    }
+  }
+
   useEffect(() => {
     listConversations()
       .then((response) => setConversations(response.conversations))
@@ -114,16 +133,25 @@ export function ChatPage() {
         ) : (
           <div className="conversation-stack">
             {conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                type="button"
-                aria-label={conversation.title || "Untitled"}
-                className={conversation.id === conversationId ? "conversation-row active" : "conversation-row"}
-                onClick={() => loadConversation(conversation.id)}
-              >
-                <strong>{conversation.title || "Untitled"}</strong>
-                <span>{conversation.message_count} messages</span>
-              </button>
+              <div className="conversation-item" key={conversation.id}>
+                <button
+                  type="button"
+                  aria-label={conversation.title || "Untitled"}
+                  className={conversation.id === conversationId ? "conversation-row active" : "conversation-row"}
+                  onClick={() => loadConversation(conversation.id)}
+                >
+                  <strong>{conversation.title || "Untitled"}</strong>
+                  <span>{conversation.message_count} messages</span>
+                </button>
+                <button
+                  type="button"
+                  className="icon-button danger-button"
+                  aria-label={`Delete ${conversation.title || "Untitled"}`}
+                  onClick={() => removeConversation(conversation)}
+                >
+                  <Trash2 size={15} aria-hidden />
+                </button>
+              </div>
             ))}
           </div>
         )}

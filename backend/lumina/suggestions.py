@@ -217,59 +217,103 @@ def update_suggestion_status(vault_root: Path, suggestion_id: str, status: str) 
     return get_suggestion(vault_root, suggestion_id)
 
 
+def _transition_suggestion_status(
+    vault_root: Path,
+    suggestion_id: str,
+    expected_status: str,
+    next_status: str,
+) -> MemorySuggestion | None:
+    now = datetime.now().isoformat(timespec="seconds")
+    with connect(vault_root) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE memory_suggestions SET status = ?, updated_at = ?
+            WHERE id = ? AND status = ?
+            """,
+            (next_status, now, suggestion_id, expected_status),
+        )
+    if cursor.rowcount != 1:
+        return None
+    return get_suggestion(vault_root, suggestion_id)
+
+
+def reject_suggestion(vault_root: Path, suggestion_id: str) -> MemorySuggestion:
+    suggestion = get_suggestion(vault_root, suggestion_id)
+    if suggestion.status != "pending":
+        return suggestion
+    rejected = _transition_suggestion_status(vault_root, suggestion_id, "pending", "rejected")
+    return rejected or get_suggestion(vault_root, suggestion_id)
+
+
 def accept_suggestion(
     vault_root: Path,
     suggestion_id: str,
     settings: AppSettings | None = None,
 ) -> MemorySuggestion:
     suggestion = get_suggestion(vault_root, suggestion_id)
+    if suggestion.status != "pending":
+        return suggestion
+    claimed = _transition_suggestion_status(vault_root, suggestion_id, "pending", "processing")
+    if claimed is None:
+        return get_suggestion(vault_root, suggestion_id)
+    suggestion = claimed
     should_rebuild = False
-    if suggestion.action == "create":
-        create_memory(
-            vault_root,
-            title=suggestion.title,
-            content=suggestion.content,
-            note_type=suggestion.type,
-            tags=suggestion.tags,
-            importance=suggestion.importance,
-            confidence=suggestion.confidence,
-            source="chat",
-        )
-        should_rebuild = True
-    elif suggestion.action == "update" and suggestion.target_note_id:
-        current = get_memory(vault_root, suggestion.target_note_id)
-        if current is not None:
-            update_memory(
+    memory_persisted = False
+    try:
+        if suggestion.action == "create":
+            create_memory(
                 vault_root,
-                suggestion.target_note_id,
-                title=suggestion.title or current.title,
+                title=suggestion.title,
                 content=suggestion.content,
-                note_type=suggestion.type or current.type,
-                tags=suggestion.tags or current.tags,
+                note_type=suggestion.type,
+                tags=suggestion.tags,
                 importance=suggestion.importance,
                 confidence=suggestion.confidence,
                 source="chat",
-                status=current.status,
-                links=current.links,
             )
+            memory_persisted = True
             should_rebuild = True
-    elif suggestion.action == "archive" and suggestion.target_note_id:
-        current = get_memory(vault_root, suggestion.target_note_id)
-        if current is not None:
-            update_memory(
-                vault_root,
-                suggestion.target_note_id,
-                title=current.title,
-                content=current.content,
-                note_type=current.type,
-                tags=current.tags,
-                importance=current.importance,
-                confidence=current.confidence,
-                source=current.source,
-                status="archived",
-                links=current.links,
-            )
-            should_rebuild = True
+        elif suggestion.action == "update" and suggestion.target_note_id:
+            current = get_memory(vault_root, suggestion.target_note_id)
+            if current is not None:
+                update_memory(
+                    vault_root,
+                    suggestion.target_note_id,
+                    title=suggestion.title or current.title,
+                    content=suggestion.content,
+                    note_type=suggestion.type or current.type,
+                    tags=suggestion.tags or current.tags,
+                    importance=suggestion.importance,
+                    confidence=suggestion.confidence,
+                    source="chat",
+                    status=current.status,
+                    links=current.links,
+                )
+                memory_persisted = True
+                should_rebuild = True
+        elif suggestion.action == "archive" and suggestion.target_note_id:
+            current = get_memory(vault_root, suggestion.target_note_id)
+            if current is not None:
+                update_memory(
+                    vault_root,
+                    suggestion.target_note_id,
+                    title=current.title,
+                    content=current.content,
+                    note_type=current.type,
+                    tags=current.tags,
+                    importance=current.importance,
+                    confidence=current.confidence,
+                    source=current.source,
+                    status="archived",
+                    links=current.links,
+                )
+                memory_persisted = True
+                should_rebuild = True
+        accepted = update_suggestion_status(vault_root, suggestion_id, "accepted")
+    except Exception:
+        if not memory_persisted:
+            _transition_suggestion_status(vault_root, suggestion_id, "processing", "pending")
+        raise
     if should_rebuild:
         rebuild_index(vault_root, settings=settings or AppSettings.load(vault_root))
-    return update_suggestion_status(vault_root, suggestion_id, "accepted")
+    return accepted

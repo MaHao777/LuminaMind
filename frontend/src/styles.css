@@ -190,6 +190,13 @@ p {
   gap: 10px;
 }
 
+.conversation-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 6px;
+}
+
 .conversation-row {
   display: grid;
   justify-content: stretch;
@@ -314,6 +321,17 @@ p {
   margin-bottom: 10px;
 }
 
+.memory-meta-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-meta-header h2 {
+  margin-bottom: 0;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;
@@ -393,6 +411,18 @@ pre {
   background: #f8fafc;
   color: #2b343d;
   border-color: #c8d0d8;
+}
+
+.danger-button {
+  border-color: #e2b8b3;
+  background: #fff5f3;
+  color: #8a2f26;
+}
+
+.status-pill.processing {
+  border-color: #bad2e8;
+  background: #edf5fc;
+  color: #315d84;
 }
 
 .banner {

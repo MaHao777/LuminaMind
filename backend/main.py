@@ -9,6 +9,7 @@ from lumina.config import AppSettings
 from lumina.conversations import (
     add_message,
     create_conversation,
+    delete_conversation,
     ensure_conversation,
     get_conversation,
     list_conversations,
@@ -30,7 +31,13 @@ from lumina.models import (
     UsedMemory,
 )
 from lumina.retrieval import retrieve_memories
-from lumina.suggestions import accept_suggestion, generate_suggestions, list_suggestions, update_suggestion_status
+from lumina.suggestions import (
+    accept_suggestion,
+    generate_suggestions,
+    list_suggestions,
+    reject_suggestion,
+    update_suggestion_status,
+)
 from lumina.vault import initialize_vault
 
 
@@ -158,9 +165,11 @@ def api_update_memory(memory_id: str, payload: MemoryUpdate) -> dict:
 
 @app.delete("/api/memories/{memory_id}")
 def api_delete_memory(memory_id: str) -> dict:
-    deleted = delete_memory(require_vault(), memory_id)
+    vault_root = require_vault()
+    deleted = delete_memory(vault_root, memory_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory not found")
+    rebuild_index(vault_root, settings=AppSettings.load(vault_root))
     return {"deleted": True}
 
 
@@ -206,6 +215,14 @@ def api_list_conversations() -> dict:
 def api_create_conversation(payload: ConversationCreate) -> dict:
     conversation = create_conversation(require_vault(), payload.title)
     return conversation.model_dump()
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def api_delete_conversation(conversation_id: str) -> dict:
+    deleted = delete_conversation(require_vault(), conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"deleted": True}
 
 
 @app.get("/api/conversations/{conversation_id}/messages")
@@ -263,7 +280,7 @@ def api_accept_suggestion(suggestion_id: str) -> dict:
 
 @app.post("/api/memory-suggestions/{suggestion_id}/reject")
 def api_reject_suggestion(suggestion_id: str) -> dict:
-    return update_suggestion_status(require_vault(), suggestion_id, "rejected").model_dump()
+    return reject_suggestion(require_vault(), suggestion_id).model_dump()
 
 
 @app.post("/api/memory-suggestions/{suggestion_id}/edit")

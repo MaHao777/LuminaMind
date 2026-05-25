@@ -81,7 +81,7 @@ export type MemorySuggestion = {
   confidence: number;
   target_note_id: string | null;
   reason: string;
-  status: string;
+  status: "pending" | "processing" | "accepted" | "rejected";
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -132,6 +132,10 @@ export function listMemories() {
   return request<{ memories: MemoryNote[] }>("/api/memories");
 }
 
+export function deleteMemory(id: string) {
+  return request<{ deleted: boolean }>(`/api/memories/${id}`, { method: "DELETE" });
+}
+
 export function sendChat(message: string, conversationId?: string) {
   return request<ChatResponse>("/api/chat", {
     method: "POST",
@@ -148,6 +152,10 @@ export function createConversation(title = "New conversation") {
     method: "POST",
     body: JSON.stringify({ title }),
   });
+}
+
+export function deleteConversation(id: string) {
+  return request<{ deleted: boolean }>(`/api/conversations/${id}`, { method: "DELETE" });
 }
 
 export function getConversationMessages(conversationId: string) {

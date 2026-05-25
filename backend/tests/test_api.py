@@ -1,11 +1,13 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
 
 from fastapi.testclient import TestClient
 
 import main
 import lumina.suggestions as suggestions_module
 from main import app
-from lumina.indexer import index_status, rebuild_index as real_rebuild_index
+from lumina.indexer import index_status, load_vectors, rebuild_index as real_rebuild_index
 
 
 def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path) -> None:
@@ -108,11 +110,18 @@ def test_api_updates_and_deletes_memory_files(tmp_path: Path) -> None:
     )
     assert updated.status_code == 200
     assert updated.json()["title"] == "新标题"
+    indexed = client.post("/api/index/rebuild")
+    assert indexed.status_code == 200
+    assert load_vectors(vault_path)
 
     deleted = client.delete(f"/api/memories/{created['id']}")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
     assert not Path(created["path"]).exists()
+    assert load_vectors(vault_path) == []
+
+    missing = client.delete(f"/api/memories/{created['id']}")
+    assert missing.status_code == 404
 
 
 def test_chat_persists_messages_lists_conversations_and_injects_history(tmp_path: Path, monkeypatch) -> None:
@@ -267,3 +276,167 @@ def test_create_conversation_starts_empty_chat_thread(tmp_path: Path) -> None:
     messages = client.get(f"/api/conversations/{payload['id']}/messages")
     assert messages.status_code == 200
     assert messages.json()["messages"] == []
+
+
+def test_delete_conversation_removes_messages_and_suggestions_but_keeps_accepted_memory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "delete-chat-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    chat = client.post("/api/chat", json={"message": "请记住这个项目决定。"})
+    conversation_id = chat.json()["conversation_id"]
+    suggestion = chat.json()["memory_suggestions"][0]
+    accepted = client.post(f"/api/memory-suggestions/{suggestion['id']}/accept")
+    assert accepted.status_code == 200
+
+    deleted = client.delete(f"/api/conversations/{conversation_id}")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert client.get(f"/api/conversations/{conversation_id}/messages").status_code == 404
+    suggestions = client.get("/api/memory-suggestions").json()["suggestions"]
+    assert all(item["conversation_id"] != conversation_id for item in suggestions)
+    memories = client.get("/api/memories").json()["memories"]
+    assert any(item["title"] == suggestion["title"] for item in memories)
+
+
+def test_accepting_suggestion_twice_creates_one_memory_and_reject_cannot_override_it(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "idempotent-suggestion-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        title="唯一记忆",
+        content="只允许写入一次。",
+    )
+
+    first = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+    second = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+    rejected = client.post(f"/api/memory-suggestions/{suggestion.id}/reject")
+
+    assert first.json()["status"] == "accepted"
+    assert second.json()["status"] == "accepted"
+    memories = client.get("/api/memories").json()["memories"]
+    assert [memory["title"] for memory in memories].count("唯一记忆") == 1
+    assert rejected.json()["status"] == "accepted"
+
+
+def test_rejected_suggestion_cannot_be_accepted_after_reaching_terminal_state(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "reject-first-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        title="拒绝后的记忆",
+        content="拒绝后不得被写入。",
+    )
+
+    rejected = client.post(f"/api/memory-suggestions/{suggestion.id}/reject")
+    accepted = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+
+    assert rejected.json()["status"] == "rejected"
+    assert accepted.json()["status"] == "rejected"
+    memories = client.get("/api/memories").json()["memories"]
+    assert all(memory["title"] != "拒绝后的记忆" for memory in memories)
+
+
+def test_accepting_suggestion_claims_processing_state_before_persisting_memory(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "concurrent-suggestion-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        title="并发记忆",
+        content="并发点击仍只生成一份。",
+    )
+
+    real_create_memory = suggestions_module.create_memory
+    first_create_entered = Event()
+    allow_first_create = Event()
+    call_lock = Lock()
+    create_calls = 0
+
+    def blocking_create_memory(*args, **kwargs):
+        nonlocal create_calls
+        with call_lock:
+            create_calls += 1
+            call_number = create_calls
+        if call_number == 1:
+            first_create_entered.set()
+            assert allow_first_create.wait(timeout=2)
+        return real_create_memory(*args, **kwargs)
+
+    monkeypatch.setattr(suggestions_module, "create_memory", blocking_create_memory)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(suggestions_module.accept_suggestion, vault_path, suggestion.id)
+        assert first_create_entered.wait(timeout=2)
+        second = pool.submit(suggestions_module.accept_suggestion, vault_path, suggestion.id)
+        second_result = second.result(timeout=2)
+        allow_first_create.set()
+        first_result = first.result(timeout=2)
+
+    assert second_result.status == "processing"
+    assert first_result.status == "accepted"
+    assert create_calls == 1
+    memories = client.get("/api/memories").json()["memories"]
+    assert [memory["title"] for memory in memories].count("并发记忆") == 1
+
+
+def test_accepting_suggestion_returns_to_pending_when_memory_write_fails(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "retry-suggestion-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        title="可重试记忆",
+        content="首次失败后允许再次处理。",
+    )
+    real_create_memory = suggestions_module.create_memory
+
+    def fail_create_memory(*args, **kwargs):
+        raise RuntimeError("write failed")
+
+    monkeypatch.setattr(suggestions_module, "create_memory", fail_create_memory)
+    failing_client = TestClient(app, raise_server_exceptions=False)
+    failed = failing_client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+
+    assert failed.status_code == 500
+    listed = client.get("/api/memory-suggestions").json()["suggestions"]
+    assert next(item for item in listed if item["id"] == suggestion.id)["status"] == "pending"
+
+    monkeypatch.setattr(suggestions_module, "create_memory", real_create_memory)
+    retried = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+    assert retried.json()["status"] == "accepted"
+
+
+def test_index_failure_after_accept_does_not_allow_duplicate_memory(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "index-failure-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        title="已写入记忆",
+        content="索引失败也不能再次写入。",
+    )
+
+    def fail_rebuild(*args, **kwargs):
+        raise RuntimeError("index failed")
+
+    monkeypatch.setattr(suggestions_module, "rebuild_index", fail_rebuild)
+    failing_client = TestClient(app, raise_server_exceptions=False)
+    failed = failing_client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+    retried = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+
+    assert failed.status_code == 500
+    assert retried.json()["status"] == "accepted"
+    memories = client.get("/api/memories").json()["memories"]
+    assert [memory["title"] for memory in memories].count("已写入记忆") == 1

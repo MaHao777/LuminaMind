@@ -36,6 +36,7 @@ vi.mock("../services/api", () => ({
   scanVault: vi.fn(async () => ({ scanned_files: 1, indexed_notes: 1, skipped_files: 0 })),
   rebuildIndex: vi.fn(async () => ({ indexed_chunks: 1 })),
   listMemories: vi.fn(async () => ({ memories: [sampleMemory] })),
+  deleteMemory: vi.fn(async () => ({ deleted: true })),
   listConversations: vi.fn(async () => ({
     conversations: [
       {
@@ -54,6 +55,7 @@ vi.mock("../services/api", () => ({
     updated_at: "2026-05-23T10:02:00",
     message_count: 0,
   })),
+  deleteConversation: vi.fn(async () => ({ deleted: true })),
   getConversationMessages: vi.fn(async () => ({
     messages: [
       {
@@ -137,6 +139,23 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.getByText("Markdown + Embedding + 双链检索。")).toBeInTheDocument();
   });
 
+  it("confirms and deletes the selected memory", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(api.listMemories)
+      .mockResolvedValueOnce({ memories: [sampleMemory] })
+      .mockResolvedValueOnce({ memories: [] });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    await screen.findByText("Markdown + Embedding + 双链检索。");
+    fireEvent.click(screen.getByRole("button", { name: `Delete ${sampleMemory.title}` }));
+
+    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith("mem_1"));
+    expect(confirm).toHaveBeenCalled();
+    expect(await screen.findByText("No Markdown memories loaded.")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
   it("sends chat messages and displays used memories", async () => {
     render(<App />);
 
@@ -165,6 +184,20 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.queryByText("之前讨论过 LuminaMind")).not.toBeInTheDocument();
   });
 
+  it("confirms and deletes the current saved conversation", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Project planning" }));
+    expect(await screen.findByText("之前讨论过 LuminaMind")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete Project planning" }));
+
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith("conv_saved"));
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.queryByText("之前讨论过 LuminaMind")).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
   it("reviews and accepts pending memory suggestions", async () => {
     render(<App />);
 
@@ -173,5 +206,55 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Accept 新的长期偏好" }));
     await waitFor(() => expect(api.acceptSuggestion).toHaveBeenCalledWith("sug_1"));
+  });
+
+  it("locks only the suggestion being accepted while processing", async () => {
+    let resolveAccept!: (value: Awaited<ReturnType<typeof api.acceptSuggestion>>) => void;
+    vi.mocked(api.acceptSuggestion).mockClear();
+    vi.mocked(api.acceptSuggestion).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveAccept = resolve;
+      }),
+    );
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const accept = await screen.findByRole("button", { name: "Accept 新的长期偏好" });
+    fireEvent.click(accept);
+    fireEvent.click(accept);
+
+    expect(await screen.findByText("Processing...")).toBeInTheDocument();
+    expect(accept).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reject 新的长期偏好" })).toBeDisabled();
+    expect(api.acceptSuggestion).toHaveBeenCalledTimes(1);
+
+    resolveAccept({ id: "sug_1", status: "accepted" } as Awaited<ReturnType<typeof api.acceptSuggestion>>);
+    await waitFor(() => expect(screen.queryByText("Processing...")).not.toBeInTheDocument());
+  });
+
+  it("locks a suggestion while rejecting and restores controls after a failed action", async () => {
+    let rejectRequest!: (value: Awaited<ReturnType<typeof api.rejectSuggestion>>) => void;
+    vi.mocked(api.rejectSuggestion).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        rejectRequest = resolve;
+      }),
+    );
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const reject = await screen.findByRole("button", { name: "Reject 新的长期偏好" });
+    fireEvent.click(reject);
+
+    expect(await screen.findByText("Processing...")).toBeInTheDocument();
+    expect(reject).toBeDisabled();
+    rejectRequest({ id: "sug_1", status: "rejected" } as Awaited<ReturnType<typeof api.rejectSuggestion>>);
+    await waitFor(() => expect(screen.queryByText("Processing...")).not.toBeInTheDocument());
+
+    vi.mocked(api.acceptSuggestion).mockRejectedValueOnce(new Error("Accept failed"));
+    const accept = screen.getByRole("button", { name: "Accept 新的长期偏好" });
+    fireEvent.click(accept);
+
+    expect(await screen.findByText("Accept failed")).toBeInTheDocument();
+    expect(accept).not.toBeDisabled();
   });
 });
