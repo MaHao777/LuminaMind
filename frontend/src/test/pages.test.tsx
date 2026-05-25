@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import * as api from "../services/api";
@@ -30,6 +30,7 @@ vi.mock("../services/api", () => ({
     ollama_base_url: "http://127.0.0.1:11434",
     ollama_chat_model: "qwen2.5:7b",
     ollama_embedding_model: "bge-m3",
+    review_mode: "manual",
     chat_context_window_tokens: null,
     chat_max_output_tokens: 8192,
   })),
@@ -130,6 +131,11 @@ vi.mock("../services/api", () => ({
 }));
 
 describe("LuminaMind MVP frontend", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, "luminaDesktop", { configurable: true, value: undefined });
+  });
+
   it("renders settings and saves provider configuration", async () => {
     render(<App />);
 
@@ -141,6 +147,7 @@ describe("LuminaMind MVP frontend", () => {
       target: { value: "65536" },
     });
     fireEvent.change(screen.getByLabelText("Max response tokens"), { target: { value: "4096" } });
+    fireEvent.change(screen.getByLabelText("Review behavior"), { target: { value: "auto" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() =>
@@ -149,18 +156,72 @@ describe("LuminaMind MVP frontend", () => {
           llm_provider: "ollama",
           chat_context_window_tokens: 65536,
           chat_max_output_tokens: 4096,
+          review_mode: "auto",
         }),
       ),
     );
   });
 
-  it("loads memories and shows selected markdown content", async () => {
+  it("selects a vault through the Electron directory chooser", async () => {
+    const chooseVaultDirectory = vi.fn(async () => "D:/picked-vault");
+    Object.defineProperty(window, "luminaDesktop", {
+      configurable: true,
+      value: { chooseVaultDirectory },
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select vault" }));
+
+    await waitFor(() => expect(chooseVaultDirectory).toHaveBeenCalled());
+    expect(api.selectVault).toHaveBeenCalledWith("D:/picked-vault");
+    expect(api.scanVault).toHaveBeenCalled();
+    expect(api.rebuildIndex).toHaveBeenCalled();
+  });
+
+  it("requires the desktop app for vault directory selection", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select vault" }));
+
+    expect(await screen.findByText("Vault folder selection is available in the desktop app only.")).toBeInTheDocument();
+    expect(api.selectVault).not.toHaveBeenCalled();
+  });
+
+  it("does not initialize a vault when directory selection is cancelled", async () => {
+    const chooseVaultDirectory = vi.fn(async () => null);
+    Object.defineProperty(window, "luminaDesktop", {
+      configurable: true,
+      value: { chooseVaultDirectory },
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select vault" }));
+
+    await waitFor(() => expect(chooseVaultDirectory).toHaveBeenCalled());
+    expect(api.selectVault).not.toHaveBeenCalled();
+    expect(api.scanVault).not.toHaveBeenCalled();
+    expect(api.rebuildIndex).not.toHaveBeenCalled();
+  });
+
+  it("loads memories and renders selected markdown content safely", async () => {
+    vi.mocked(api.listMemories).mockResolvedValueOnce({
+      memories: [{
+        ...sampleMemory,
+        content: "# Stored Memory\n\n**Markdown** body\n\n| Format | State |\n| --- | --- |\n| GFM | Enabled |\n\n<span data-testid=\"memory-html\">Unsafe</span>",
+      }],
+    });
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Memory" }));
 
     expect(await screen.findAllByText("LuminaMind 技术路线")).toHaveLength(2);
-    expect(screen.getByText("Markdown + Embedding + 双链检索。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Stored Memory" })).toBeInTheDocument();
+    expect(screen.getByText("Markdown").tagName).toBe("STRONG");
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByTestId("memory-html")).not.toBeInTheDocument();
   });
 
   it("confirms and deletes the selected memory", async () => {
@@ -191,6 +252,35 @@ describe("LuminaMind MVP frontend", () => {
     expect(await screen.findByText("第一版先完成 Markdown 记忆库和混合检索闭环。")).toBeInTheDocument();
     expect(screen.getByText("LuminaMind 技术路线")).toBeInTheDocument();
     expect(screen.getByText("1 memory suggestion ready for review.")).toBeInTheDocument();
+  });
+
+  it("does not prompt for review when chat suggestions were automatically accepted", async () => {
+    vi.mocked(api.sendChat).mockResolvedValueOnce({
+      conversation_id: "conv_saved",
+      answer: "自动保存完成。",
+      used_memories: [],
+      memory_suggestions: [{
+        id: "sug_accepted",
+        conversation_id: "conv_saved",
+        action: "create",
+        title: "自动记录",
+        content: "自动接受内容。",
+        type: "log",
+        tags: [],
+        importance: 3,
+        confidence: 0.8,
+        target_note_id: null,
+        reason: "自动模式",
+        status: "accepted",
+      }],
+    });
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "自动记录这个信息" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("自动保存完成。")).toBeInTheDocument();
+    expect(screen.queryByText(/memory suggestion.*ready for review/)).not.toBeInTheDocument();
   });
 
   it("shows a pending agent message until the chat response arrives", async () => {
@@ -397,14 +487,47 @@ describe("LuminaMind MVP frontend", () => {
     confirm.mockRestore();
   });
 
-  it("reviews and accepts pending memory suggestions", async () => {
+  it("shows a review badge and clears it when pending suggestions are accepted", async () => {
+    vi.mocked(api.listSuggestions)
+      .mockResolvedValueOnce({ suggestions: [{
+        id: "sug_1", conversation_id: "conv_1", action: "create", title: "新的长期偏好",
+        content: "用户偏好端到端切片。", type: "profile", tags: ["偏好"], importance: 4,
+        confidence: 0.8, target_note_id: null, reason: "对未来回答有帮助", status: "pending",
+      }] })
+      .mockResolvedValueOnce({ suggestions: [{
+        id: "sug_1", conversation_id: "conv_1", action: "create", title: "新的长期偏好",
+        content: "用户偏好端到端切片。", type: "profile", tags: ["偏好"], importance: 4,
+        confidence: 0.8, target_note_id: null, reason: "对未来回答有帮助", status: "pending",
+      }] })
+      .mockResolvedValueOnce({ suggestions: [] });
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const reviewNavigation = await screen.findByRole("button", { name: "Review, 1 pending" });
+    fireEvent.click(reviewNavigation);
     expect(await screen.findByText("新的长期偏好")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Accept 新的长期偏好" }));
     await waitFor(() => expect(api.acceptSuggestion).toHaveBeenCalledWith("sug_1"));
+    expect(await screen.findByRole("button", { name: "Review" })).toBeInTheDocument();
+  });
+
+  it("renders accepted review history as non-actionable records", async () => {
+    const acceptedHistory: Awaited<ReturnType<typeof api.listSuggestions>> = {
+      suggestions: [{
+        id: "sug_done", conversation_id: "conv_1", action: "create", title: "已自动记录",
+        content: "无需手动处理。", type: "log", tags: [], importance: 3,
+        confidence: 0.8, target_note_id: null, reason: "自动模式", status: "accepted",
+      }],
+    };
+    vi.mocked(api.listSuggestions)
+      .mockResolvedValueOnce(acceptedHistory)
+      .mockResolvedValueOnce(acceptedHistory);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+
+    expect(await screen.findByText("accepted")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept 已自动记录" })).toBeDisabled();
   });
 
   it("locks only the suggestion being accepted while processing", async () => {
@@ -417,7 +540,7 @@ describe("LuminaMind MVP frontend", () => {
     );
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Review/ }));
     const accept = await screen.findByRole("button", { name: "Accept 新的长期偏好" });
     fireEvent.click(accept);
     fireEvent.click(accept);
@@ -440,7 +563,7 @@ describe("LuminaMind MVP frontend", () => {
     );
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Review/ }));
     const reject = await screen.findByRole("button", { name: "Reject 新的长期偏好" });
     fireEvent.click(reject);
 

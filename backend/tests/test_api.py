@@ -196,6 +196,68 @@ def test_chat_auto_generates_pending_memory_suggestions_after_response(tmp_path:
     assert any(item["id"] == suggestion["id"] for item in listed)
 
 
+def test_chat_auto_review_mode_accepts_new_suggestions_immediately(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "automatic-review-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    AppSettings(vault_path=str(vault_path), review_mode="auto").save(vault_path)
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+
+    response = client.post("/api/chat", json={"message": "请记住我的自动审查偏好。"})
+
+    assert response.status_code == 200
+    suggestion = response.json()["memory_suggestions"][0]
+    assert suggestion["status"] == "accepted"
+    memories = client.get("/api/memories").json()["memories"]
+    assert any(item["title"] == suggestion["title"] for item in memories)
+
+
+def test_auto_review_does_not_accept_an_existing_pending_duplicate(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "preserved-pending-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    draft = {
+        "action": "create",
+        "title": "保留人工判断",
+        "content": "这个候选已经在人工待审队列中。",
+        "type": "log",
+        "tags": ["review"],
+        "importance": 3,
+        "confidence": 0.8,
+        "target_note_id": None,
+        "reason": "需要人工确认",
+    }
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(suggestions_module, "generate_memory_suggestion_drafts", lambda *args: [draft])
+
+    first = client.post("/api/chat", json={"message": "第一次产生候选。"}).json()
+    AppSettings(vault_path=str(vault_path), review_mode="auto").save(vault_path)
+    second = client.post(
+        "/api/chat",
+        json={"conversation_id": first["conversation_id"], "message": "再次讨论相同内容。"},
+    ).json()
+
+    assert first["memory_suggestions"][0]["status"] == "pending"
+    assert second["memory_suggestions"][0]["id"] == first["memory_suggestions"][0]["id"]
+    assert second["memory_suggestions"][0]["status"] == "pending"
+    assert all(item["title"] != draft["title"] for item in client.get("/api/memories").json()["memories"])
+
+
+def test_auto_review_restores_new_suggestion_to_pending_when_write_fails(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "automatic-review-retry-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    AppSettings(vault_path=str(vault_path), review_mode="auto").save(vault_path)
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(suggestions_module, "create_memory", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("write failed")))
+
+    failed = TestClient(app, raise_server_exceptions=False).post("/api/chat", json={"message": "保存这个决定。"})
+
+    assert failed.status_code == 500
+    listed = client.get("/api/memory-suggestions").json()["suggestions"]
+    assert listed[0]["status"] == "pending"
+
+
 def test_chat_rebuilds_missing_memory_index_before_retrieval(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "chat-index-vault"

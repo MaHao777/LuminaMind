@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { acceptSuggestion, listSuggestions, rejectSuggestion, type MemorySuggestion } from "../services/api";
 
-export function ReviewPage() {
+type Props = {
+  onSuggestionsLoaded?: (suggestions: MemorySuggestion[]) => void;
+};
+
+export function ReviewPage({ onSuggestionsLoaded }: Props) {
   const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
   const [processingIds, setProcessingIds] = useState<Set<string>>(() => new Set());
   const inFlight = useRef<Set<string>>(new Set());
@@ -13,6 +17,7 @@ export function ReviewPage() {
     try {
       const response = await listSuggestions();
       setSuggestions(response.suggestions);
+      onSuggestionsLoaded?.(response.suggestions);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load suggestions");
     }
@@ -57,7 +62,7 @@ export function ReviewPage() {
                 <span className={`status-pill ${processingIds.has(suggestion.id) ? "processing" : suggestion.status}`}>
                   {processingIds.has(suggestion.id) || suggestion.status === "processing"
                     ? "Processing..."
-                    : suggestion.action}
+                    : suggestion.status}
                 </span>
                 <h2>{suggestion.title}</h2>
                 <p>{suggestion.content}</p>

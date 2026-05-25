@@ -1,7 +1,9 @@
 export type LlmProvider = "deepseek" | "ollama";
+export type ReviewMode = "manual" | "auto";
 
 export type AppSettings = {
   vault_path: string;
+  review_mode: ReviewMode;
   llm_provider: LlmProvider;
   deepseek_base_url: string;
   deepseek_model: string;

@@ -25,6 +25,10 @@ type ConversationMenu = {
   top: number;
 };
 
+type Props = {
+  onSuggestionsChanged?: () => void | Promise<void>;
+};
+
 function sortConversations(conversations: ConversationSummary[]) {
   return [...conversations].sort(
     (left, right) =>
@@ -34,7 +38,7 @@ function sortConversations(conversations: ConversationSummary[]) {
   );
 }
 
-export function ChatPage() {
+export function ChatPage({ onSuggestionsChanged }: Props) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -195,7 +199,8 @@ export function ChatPage() {
       setConversationId(response.conversation_id);
       setMessages((current) => [...current, { role: "assistant", content: response.answer }]);
       setUsedMemories(response.used_memories);
-      setSuggestionCount(response.memory_suggestions?.length ?? 0);
+      setSuggestionCount(response.memory_suggestions?.filter((suggestion) => suggestion.status === "pending").length ?? 0);
+      void onSuggestionsChanged?.();
       setLoading(false);
       try {
         await refreshConversations(response.conversation_id);

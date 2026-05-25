@@ -126,12 +126,14 @@ def test_retrieve_memories_fuses_keyword_link_importance_and_vector_scores(tmp_p
 def test_settings_roundtrip_prefers_vault_config(tmp_path: Path) -> None:
     vault = initialize_vault(tmp_path / "vault")
     settings = AppSettings.load(vault.root)
+    assert settings.review_mode == "manual"
 
     updated = settings.model_copy(
         update={
             "llm_provider": "ollama",
             "ollama_chat_model": "qwen2.5:7b",
             "deepseek_api_key": "test-key",
+            "review_mode": "auto",
         }
     )
     updated.save(vault.root)
@@ -140,6 +142,7 @@ def test_settings_roundtrip_prefers_vault_config(tmp_path: Path) -> None:
     assert loaded.llm_provider == "ollama"
     assert loaded.ollama_chat_model == "qwen2.5:7b"
     assert loaded.deepseek_api_key == "test-key"
+    assert loaded.review_mode == "auto"
 
 
 def test_settings_resolve_context_defaults_and_reject_oversubscribed_output() -> None:

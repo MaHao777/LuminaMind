@@ -126,6 +126,19 @@ p {
   background: #e6edf2;
 }
 
+.nav-badge {
+  min-width: 20px;
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #d43c3c;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
 .sidebar-status {
   display: flex;
   align-items: center;
@@ -566,6 +579,82 @@ p {
 
 .markdown-reader {
   overflow: auto;
+}
+
+.markdown-content {
+  color: #25313c;
+  line-height: 1.65;
+}
+
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
+  margin: 20px 0 10px;
+  color: #1d2329;
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child {
+  margin-top: 0;
+}
+
+.markdown-content p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content pre,
+.markdown-content table {
+  margin: 0 0 12px;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 24px;
+}
+
+.markdown-content a {
+  color: #376c94;
+}
+
+.markdown-content code {
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: #edf2f6;
+  font-size: 0.92em;
+}
+
+.markdown-content pre {
+  overflow-x: auto;
+  border-radius: 6px;
+  padding: 12px;
+  background: #edf2f6;
+}
+
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.markdown-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #d1d9e0;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.markdown-content th {
+  background: #eef3f7;
 }
 
 .memory-meta {

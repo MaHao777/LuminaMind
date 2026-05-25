@@ -131,6 +131,16 @@ def _find_existing_pending(
     return _row_to_suggestion(row) if row else None
 
 
+def _apply_review_mode(
+    vault_root: Path,
+    suggestion: MemorySuggestion,
+    settings: AppSettings,
+) -> MemorySuggestion:
+    if settings.review_mode == "auto":
+        return accept_suggestion(vault_root, suggestion.id, settings=settings)
+    return suggestion
+
+
 def generate_suggestions(
     vault_root: Path,
     conversation_id: str | None = None,
@@ -148,7 +158,7 @@ def generate_suggestions(
             tags=["LuminaMind"],
             reason="这是一个可审查的候选记忆，用于验证写入闭环。",
         )
-        return [suggestion]
+        return [_apply_review_mode(vault_root, suggestion, settings)]
 
     related_memories = retrieve_memories(
         vault_root,
@@ -175,21 +185,20 @@ def generate_suggestions(
         if existing is not None:
             suggestions.append(existing)
             continue
-        suggestions.append(
-            create_suggestion(
-                vault_root,
-                conversation_id=conversation_id,
-                title=draft["title"],
-                content=draft["content"],
-                action=draft["action"],
-                note_type=draft["type"],
-                tags=draft["tags"],
-                importance=draft["importance"],
-                confidence=draft["confidence"],
-                reason=draft["reason"],
-                target_note_id=draft["target_note_id"],
-            )
+        created = create_suggestion(
+            vault_root,
+            conversation_id=conversation_id,
+            title=draft["title"],
+            content=draft["content"],
+            action=draft["action"],
+            note_type=draft["type"],
+            tags=draft["tags"],
+            importance=draft["importance"],
+            confidence=draft["confidence"],
+            reason=draft["reason"],
+            target_note_id=draft["target_note_id"],
         )
+        suggestions.append(_apply_review_mode(vault_root, created, settings))
     return suggestions
 
 

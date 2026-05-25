@@ -5,6 +5,7 @@ import { rebuildIndex, saveSettings, scanVault, selectVault, type AppSettings } 
 
 const emptySettings: AppSettings = {
   vault_path: "",
+  review_mode: "manual",
   llm_provider: "deepseek",
   deepseek_base_url: "https://api.deepseek.com",
   deepseek_model: "deepseek-chat",
@@ -61,12 +62,21 @@ export function SettingsPage({ settings, onSettingsChange }: Props) {
 
   async function initializeVault() {
     setError("");
+    const chooseVaultDirectory = window.luminaDesktop?.chooseVaultDirectory;
+    if (!chooseVaultDirectory) {
+      setError("Vault folder selection is available in the desktop app only.");
+      return;
+    }
     try {
-      const selected = await selectVault(form.vault_path);
+      const chosenPath = await chooseVaultDirectory();
+      if (!chosenPath) return;
+      const selected = await selectVault(chosenPath);
       const scan = await scanVault();
       const index = await rebuildIndex();
+      const nextForm = { ...form, vault_path: selected.path };
+      setForm(nextForm);
       setStatus(`Vault ${selected.path} ready. ${scan.indexed_notes} notes, ${index.indexed_chunks} chunks.`);
-      onSettingsChange({ ...form, vault_path: selected.path });
+      onSettingsChange(nextForm);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to initialize vault");
     }
@@ -82,12 +92,22 @@ export function SettingsPage({ settings, onSettingsChange }: Props) {
         <section className="panel form-panel">
           <label>
             Vault path
-            <input value={form.vault_path} onChange={updateText("vault_path")} placeholder="D:/MyAgentMemory" />
+            <input value={form.vault_path} readOnly placeholder="No vault selected" />
           </label>
           <button type="button" className="icon-text-button" onClick={initializeVault}>
             <FolderOpen size={16} aria-hidden />
             Select vault
           </button>
+        </section>
+
+        <section className="panel form-panel">
+          <label>
+            Review behavior
+            <select value={form.review_mode} onChange={updateText("review_mode")}>
+              <option value="manual">Manual acceptance</option>
+              <option value="auto">Automatic acceptance</option>
+            </select>
+          </label>
         </section>
 
         <section className="panel form-panel">

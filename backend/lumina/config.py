@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,6 +22,7 @@ DEEPSEEK_LONG_CONTEXT_MODELS = {
 
 class AppSettings(BaseModel):
     vault_path: str = ""
+    review_mode: Literal["manual", "auto"] = "manual"
     llm_provider: str = Field(default="deepseek", pattern="^(deepseek|ollama)$")
     deepseek_base_url: str = DEFAULT_DEEPSEEK_BASE_URL
     deepseek_model: str = "deepseek-chat"

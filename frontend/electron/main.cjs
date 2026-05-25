@@ -1,4 +1,16 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+
+ipcMain.handle("vault:choose-directory", async () => {
+  const parent = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const options = {
+    title: "Select memory vault",
+    properties: ["openDirectory", "createDirectory"],
+  };
+  const result = parent
+    ? await dialog.showOpenDialog(parent, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : result.filePaths[0] || null;
+});
 
 function createWindow() {
   const win = new BrowserWindow({

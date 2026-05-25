@@ -1,11 +1,11 @@
 import { BookOpenText, CheckCheck, MessageSquareText, Search, Settings, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ChatPage } from "./pages/ChatPage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { getSettings, type AppSettings } from "./services/api";
+import { getSettings, listSuggestions, type AppSettings, type MemorySuggestion } from "./services/api";
 
 type Page = "chat" | "memory" | "review" | "settings";
 
@@ -19,6 +19,7 @@ const navItems: Array<{ id: Page; label: string; icon: typeof MessageSquareText 
 export default function App() {
   const [page, setPage] = useState<Page>("chat");
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [pendingSuggestionCount, setPendingSuggestionCount] = useState(0);
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
@@ -27,12 +28,37 @@ export default function App() {
       .catch((err: Error) => setError(err.message));
   }, []);
 
-  const content = useMemo(() => {
-    if (page === "memory") return <MemoryPage />;
-    if (page === "review") return <ReviewPage />;
-    if (page === "settings") return <SettingsPage settings={settings} onSettingsChange={setSettings} />;
-    return <ChatPage />;
-  }, [page, settings]);
+  function updatePendingCount(suggestions: MemorySuggestion[]) {
+    setPendingSuggestionCount(suggestions.filter((suggestion) => suggestion.status === "pending").length);
+  }
+
+  async function refreshPendingSuggestions() {
+    if (!settings?.vault_path) {
+      setPendingSuggestionCount(0);
+      return;
+    }
+    try {
+      const response = await listSuggestions();
+      updatePendingCount(response.suggestions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load pending reviews");
+    }
+  }
+
+  useEffect(() => {
+    void refreshPendingSuggestions();
+  }, [settings?.vault_path]);
+
+  let content;
+  if (page === "memory") {
+    content = <MemoryPage />;
+  } else if (page === "review") {
+    content = <ReviewPage onSuggestionsLoaded={updatePendingCount} />;
+  } else if (page === "settings") {
+    content = <SettingsPage settings={settings} onSettingsChange={setSettings} />;
+  } else {
+    content = <ChatPage onSuggestionsChanged={refreshPendingSuggestions} />;
+  }
 
   return (
     <div className="app-shell">
@@ -52,11 +78,17 @@ export default function App() {
               <button
                 key={item.id}
                 type="button"
+                aria-label={item.id === "review" && pendingSuggestionCount > 0
+                  ? `Review, ${pendingSuggestionCount} pending`
+                  : item.label}
                 className={page === item.id ? "nav-item active" : "nav-item"}
                 onClick={() => setPage(item.id)}
               >
                 <Icon size={18} aria-hidden />
                 {item.label}
+                {item.id === "review" && pendingSuggestionCount > 0 ? (
+                  <span className="nav-badge" aria-hidden="true">{pendingSuggestionCount}</span>
+                ) : null}
               </button>
             );
           })}
