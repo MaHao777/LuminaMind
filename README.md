@@ -20,9 +20,62 @@ LuminaMind Agent 的核心目标是：
 
 ---
 
-## 2. 核心设计
+## 2. QuickStart
 
-### 2.1 白盒化 Markdown 记忆系统
+### 前置依赖
+
+- Python 3.10+
+- Node.js 18+
+- 可选：Ollama（本地 Embedding/LLM）或 DeepSeek/OpenRouter API Key
+
+### 克隆与启动
+
+```bash
+# 1. 后端
+cd backend
+python -m venv .venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+# macOS / Linux
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+# 2. 前端（新终端）
+cd frontend
+npm install
+npm run dev
+
+# 3. 桌面应用（可选，新终端）
+cd frontend
+npm run electron:dev
+```
+
+### 初始化记忆库
+
+1. 打开浏览器访问 `http://127.0.0.1:5173`
+2. 进入 **Settings → Vault**，选择或新建一个本地文件夹作为记忆库
+3. 系统自动创建 `Memories/`、`Inbox/`、`Attachments/` 等目录
+4. 在 **Settings → Models** 中配置 LLM（DeepSeek / Ollama / OpenRouter）
+
+### 验证运行
+
+```powershell
+# 后端测试
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests
+
+# 前端测试与构建
+cd frontend
+npm test -- --run
+npm run build
+```
+
+---
+
+## 3. 核心设计
+
+### 3.1 白盒化 Markdown 记忆系统
 
 长期记忆存储为 Markdown 原子笔记，数据库和向量索引只是辅助结构：
 
@@ -30,28 +83,28 @@ LuminaMind Agent 的核心目标是：
 - 记忆可被其他 Markdown 工具读取，不被锁死在平台内部。
 - 记忆既是 Agent 的上下文，也是用户自己的知识资产。
 
-### 2.2 双轨制混合检索
+### 3.2 双轨制混合检索
 
 1. **Embedding 语义向量检索** — 召回语义相似、表达不同但含义接近的记忆。
 2. **Obsidian 式双链文本网络检索** — 保留显式的知识关系、任务关系、因果链路。
 
 两种机制结合后，系统既能处理模糊查询，又能沿着笔记之间的逻辑关系进行上下文扩展。
 
-### 2.3 用户可审查的记忆写入
+### 3.3 用户可审查的记忆写入
 
-Agent 不直接静默写入长期记忆，而是生成候选记忆（新增 / 更新 / 废弃 / 忽略），由用户审查确认后写入 Markdown 记忆库，降低 AI 误记、乱记和过度记录的问题。
+Agent 不直接静默写入长期记忆，而是生成候选记忆（新增 / 更新 / 废弃 / 忽略），由用户审查确认后写入 Markdown 记忆库，降低 AI 误记、乱记和过度记录的问题。支持 **手动审查** 和 **自动接受** 两种模式。
 
-### 2.4 本地优先与可迁移
+### 3.4 本地优先与可迁移
 
 用户选择本地文件夹作为记忆库路径。核心记忆以 Markdown 文件存在，便于备份、同步、迁移和审查。
 
 ---
 
-## 3. 产品形态
+## 4. 产品形态
 
-独立桌面应用。用户安装后选择本地文件夹作为记忆库，应用扫描 Markdown 文件并建立索引，用户在聊天窗口与 Agent 对话，Agent 基于本地记忆回答，对话结束后生成候选记忆供用户审查。
+独立桌面应用（Electron），开发期前后端分离运行。用户安装后选择本地文件夹作为记忆库，应用扫描 Markdown 文件并建立索引，用户在聊天窗口与 Agent 对话，Agent 基于本地记忆回答，对话结束后生成候选记忆供用户审查。
 
-### 3.1 文件夹结构
+### 4.1 文件夹结构
 
 ```text
 MyAgentMemory/
@@ -66,9 +119,9 @@ MyAgentMemory/
 ├─ Attachments/
 │  └─ 上传的文件、图片、PDF
 └─ .agent/
-   ├─ index.db
-   ├─ vector_index/
-   ├─ config.json
+   ├─ index.db            # SQLite 元数据库
+   ├─ vector_index/       # 向量索引（Chroma / JSON fallback）
+   ├─ config.json         # 用户配置
    └─ cache/
 ```
 
@@ -79,9 +132,9 @@ MyAgentMemory/
 
 ---
 
-## 4. 技术架构
+## 5. 技术架构
 
-### 4.1 总体架构
+### 5.1 总体架构
 
 ```text
 独立桌面应用
@@ -89,118 +142,98 @@ MyAgentMemory/
 │  ├─ Chat 聊天窗口
 │  ├─ Memory 记忆库浏览
 │  ├─ Review 记忆审查
-│  ├─ Task 任务面板
-│  └─ Settings 设置页面
+│  ├─ Settings 设置页面
+│  └─ Appearance 主题切换
 │
 ├─ 本地 Agent 引擎
 │  ├─ 对话管理
 │  ├─ 记忆检索
 │  ├─ 记忆提取
-│  ├─ 任务规划
+│  ├─ 记忆建议生成
 │  └─ 工具调用
 │
 ├─ 记忆系统
 │  ├─ Markdown 原子笔记
 │  ├─ 双链关系图谱
 │  ├─ Embedding 向量索引
-│  ├─ 关键词全文检索
+│  ├─ FTS5 全文检索
 │  └─ 记忆更新机制
 │
 └─ 本地数据层
    ├─ 用户选择的 Markdown 文件夹
-   ├─ SQLite 元数据库
-   ├─ 向量索引数据库
+   ├─ SQLite 元数据库（notes/links/chunks）
+   ├─ 向量索引数据库（Chroma / JSON fallback）
    └─ 聊天历史数据库
 ```
 
-### 4.2 推荐技术栈
+### 5.2 技术栈
 
-```text
-桌面端：Electron + React + TypeScript
-后端：  Python + FastAPI
-本地存储：Markdown + SQLite
-向量索引：Chroma / LanceDB / FAISS
-Embedding：OpenAI Embedding / bge-m3
-LLM：    OpenAI / DeepSeek / Qwen / Ollama
-文件监听：watchdog / chokidar
-```
+| 层级 | 技术 |
+| --- | --- |
+| 桌面端 | Electron + React 18 + TypeScript |
+| 后端 | Python + FastAPI + Pydantic v2 |
+| 本地存储 | Markdown + SQLite + FTS5 |
+| 向量索引 | ChromaDB（可选 fallback JSON） |
+| Embedding | Ollama bge-m3 / LocalHash 384d / OpenRouter |
+| LLM | DeepSeek Chat / Ollama / OpenRouter |
+| 前端构建 | Vite + Vitest |
 
-### 4.3 前端模块结构
-
-```text
-frontend/
-├─ src/
-│  ├─ pages/
-│  │  ├─ ChatPage.tsx
-│  │  ├─ MemoryPage.tsx
-│  │  ├─ ReviewPage.tsx
-│  │  ├─ TaskPage.tsx
-│  │  └─ SettingsPage.tsx
-│  ├─ components/
-│  │  ├─ ChatWindow.tsx
-│  │  ├─ MemoryCard.tsx
-│  │  ├─ MemorySourcePanel.tsx
-│  │  ├─ MarkdownEditor.tsx
-│  │  ├─ FileTree.tsx
-│  │  └─ SuggestionCard.tsx
-│  ├─ services/
-│  │  ├─ api.ts
-│  │  ├─ chatService.ts
-│  │  ├─ memoryService.ts
-│  │  └─ settingsService.ts
-│  └─ store/
-│     ├─ chatStore.ts
-│     ├─ memoryStore.ts
-│     └─ settingsStore.ts
-```
-
-前端职责：聊天界面、展示被唤醒的记忆、编辑 Markdown 记忆、审查记忆建议、配置模型/API Key/记忆库路径。
-
-### 4.4 后端模块结构
+### 5.3 实际模块结构
 
 ```text
 backend/
-├─ main.py
-├─ config.py
-├─ agent/
-│  ├─ chat_agent.py
-│  ├─ planner.py
-│  ├─ prompts.py
-│  └─ tools.py
-├─ memory/
-│  ├─ markdown_store.py
-│  ├─ parser.py
-│  ├─ extractor.py
-│  ├─ retriever.py
-│  ├─ updater.py
-│  └─ graph.py
-├─ index/
-│  ├─ indexer.py
-│  ├─ vector_index.py
-│  ├─ fulltext_index.py
-│  └─ reranker.py
-├─ llm/
-│  ├─ client.py
-│  ├─ embedding.py
-│  └─ model_config.py
-├─ db/
-│  ├─ sqlite.py
-│  └─ schema.sql
-└─ utils/
-   ├─ file_hash.py
-   ├─ text_splitter.py
-   └─ time_utils.py
-```
+├─ main.py                    # FastAPI 入口与路由
+├─ requirements.txt
+└─ lumina/
+   ├─ config.py               # AppSettings 模型与持久化
+   ├─ db.py                   # SQLite 连接与 Schema
+   ├─ models.py               # Pydantic 数据模型
+   ├─ vault.py                # 记忆库初始化
+   ├─ embedding.py            # Embedding 提供者（LocalHash/Ollama/OpenRouter）
+   ├─ indexer.py              # 文本分块与向量索引构建
+   ├─ llm.py                  # LLM 调用与 Prompt 构建
+   ├─ retrieval.py            # 混合检索（语义+关键词+双链+评分）
+   ├─ conversations.py        # 会话 CRUD 与消息管理
+   ├─ suggestions.py          # 记忆建议生成与审查流程
+   └─ memory/
+      ├─ markdown.py          # Markdown 解析与构建（YAML frontmatter + 双链）
+      └─ store.py             # 记忆 CRUD 与文件写入
 
-后端职责：Markdown 读写、YAML frontmatter 解析、双链解析、Embedding 生成、向量索引、全文索引、混合检索与重排序、调用 LLM、从对话中提取候选记忆。
+frontend/
+├─ index.html
+├─ package.json
+├─ vite.config.ts
+├─ tsconfig.json
+├─ electron/
+│  ├─ main.cjs               # Electron 主进程
+│  └─ preload.cjs             # IPC preload 桥接
+└─ src/
+   ├─ main.tsx                # React 入口
+   ├─ App.tsx                 # 应用 Shell + 导航
+   ├─ styles.css              # 全局样式（多主题）
+   ├─ services/
+   │  ├─ api.ts               # API 客户端
+   │  └─ uiPreferences.ts     # 本地 UI 偏好
+   ├─ pages/
+   │  ├─ ChatPage.tsx         # 聊天 + 会话管理 + 模型选择
+   │  ├─ MemoryPage.tsx       # 记忆库浏览
+   │  ├─ ReviewPage.tsx       # 记忆审查
+   │  └─ SettingsPage.tsx     # 配置（Vault / Review / Models / Appearance）
+   ├─ components/
+   │  └─ MarkdownContent.tsx  # Markdown 渲染（GFM + LaTeX + 代码高亮）
+   └─ test/
+      ├─ setup.ts
+      ├─ api.test.ts
+      └─ pages.test.tsx
+```
 
 ---
 
-## 5. Markdown 记忆格式
+## 6. Markdown 记忆格式
 
 每条长期记忆以 Markdown 文件保存，包含 YAML frontmatter。
 
-### 5.1 示例
+### 6.1 示例
 
 ```markdown
 ---
@@ -217,6 +250,7 @@ importance: 5
 confidence: 0.95
 source: chat
 status: active
+pinned: false
 created: 2026-05-23
 updated: 2026-05-23
 links:
@@ -228,10 +262,10 @@ links:
 用户正在开发一个面向学习与工作的个人长期 Agent 应用。项目核心创新是将 Agent 的长期记忆存储为用户可编辑的 Markdown 原子笔记，并结合双链文本网络与 Embedding 语义向量进行双轨制检索。
 ```
 
-### 5.2 字段说明
+### 6.2 字段说明
 
 | 字段 | 含义 |
-|---|---|
+| --- | --- |
 | `id` | 记忆唯一标识 |
 | `title` | 记忆标题 |
 | `type` | 记忆类型：profile / project / concept / task / log |
@@ -240,15 +274,16 @@ links:
 | `confidence` | 置信度 0–1 |
 | `source` | 来源：chat / file / manual / import |
 | `status` | 状态：active / outdated / archived |
+| `pinned` | 是否置顶 |
 | `created` | 创建日期 |
 | `updated` | 更新日期 |
 | `links` | 显式双链关系 `[[笔记标题]]` |
 
 ---
 
-## 6. 混合检索机制
+## 7. 混合检索机制
 
-### 6.1 检索流程
+### 7.1 检索流程
 
 ```text
 用户问题 q
@@ -257,7 +292,7 @@ Step 1：对 q 生成 Embedding
   ↓
 Step 2：从向量索引中召回语义相似记忆 (top_k)
   ↓
-Step 3：通过关键词 / BM25 全文检索召回显式命中记忆
+Step 3：通过关键词 / FTS5 全文检索召回显式命中记忆
   ↓
 Step 4：从初始召回结果出发，沿 [[双链]] 进行一跳或二跳扩展
   ↓
@@ -268,7 +303,7 @@ Step 6：选出最终记忆上下文
 Step 7：输入给 LLM 生成回答
 ```
 
-### 6.2 综合评分公式
+### 7.2 综合评分公式
 
 ```text
 FinalScore =
@@ -280,20 +315,20 @@ FinalScore =
 ```
 
 - `SemanticScore`：Embedding 语义相似度。
-- `KeywordScore`：关键词或 BM25 命中分数。
+- `KeywordScore`：关键词或 FTS5 命中分数。
 - `LinkScore`：双链图谱中的关联强度。
 - `ImportanceScore`：记忆重要程度。
-- `RecencyScore`：时间新鲜度。
+- `RecencyScore`：时间新鲜度（指数衰减，半衰期 365 天）。
 
-权重可在后续根据实际效果动态调整。
+权重可在后续根据实际效果动态调整，命中原因会在搜索结果中展示。
 
 ---
 
-## 7. 数据库设计
+## 8. 数据库设计
 
 SQLite 用于保存元数据、索引状态和聊天历史，不作为长期记忆本体。
 
-### 7.1 notes
+### 8.1 notes
 
 ```sql
 CREATE TABLE notes (
@@ -302,14 +337,19 @@ CREATE TABLE notes (
     path TEXT NOT NULL UNIQUE,
     type TEXT,
     tags TEXT,
+    content TEXT,
+    importance INTEGER DEFAULT 3,
+    confidence REAL DEFAULT 0.9,
+    source TEXT DEFAULT 'manual',
+    status TEXT DEFAULT 'active',
+    pinned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT,
     updated_at TEXT,
-    file_hash TEXT,
-    status TEXT DEFAULT 'active'
+    file_hash TEXT
 );
 ```
 
-### 7.2 links
+### 8.2 links
 
 ```sql
 CREATE TABLE links (
@@ -318,11 +358,11 @@ CREATE TABLE links (
     target_note_title TEXT NOT NULL,
     target_note_id TEXT,
     link_type TEXT DEFAULT 'wikilink',
-    FOREIGN KEY (source_note_id) REFERENCES notes(id)
+    FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE
 );
 ```
 
-### 7.3 chunks
+### 8.3 chunks
 
 ```sql
 CREATE TABLE chunks (
@@ -333,35 +373,43 @@ CREATE TABLE chunks (
     embedding_id TEXT,
     created_at TEXT,
     updated_at TEXT,
-    FOREIGN KEY (note_id) REFERENCES notes(id)
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
 );
 ```
 
-### 7.4 conversations
+### 8.4 conversations / messages
 
 ```sql
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
     title TEXT,
     created_at TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    pinned INTEGER NOT NULL DEFAULT 0
 );
-```
 
-### 7.5 messages
-
-```sql
 CREATE TABLE messages (
     id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT,
-    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 ```
 
-### 7.6 memory_suggestions
+### 8.5 全文索引
+
+```sql
+CREATE VIRTUAL TABLE notes_fts USING fts5(
+    note_id UNINDEXED,
+    title,
+    content,
+    tags
+);
+```
+
+### 8.6 memory_suggestions
 
 ```sql
 CREATE TABLE memory_suggestions (
@@ -370,7 +418,12 @@ CREATE TABLE memory_suggestions (
     action TEXT NOT NULL,
     title TEXT,
     content TEXT NOT NULL,
+    type TEXT DEFAULT 'log',
+    tags TEXT,
+    importance INTEGER DEFAULT 3,
+    confidence REAL DEFAULT 0.8,
     target_note_id TEXT,
+    reason TEXT,
     status TEXT DEFAULT 'pending',
     created_at TEXT,
     updated_at TEXT
@@ -379,44 +432,45 @@ CREATE TABLE memory_suggestions (
 
 ---
 
-## 8. API 设计
+## 9. API 设计
 
 后端使用 FastAPI 提供本地接口。
 
-### 8.1 系统配置
+### 9.1 系统配置
 
 ```http
-GET  /api/settings
-POST /api/settings
+GET  /api/settings              # 获取当前配置
+POST /api/settings              # 保存配置（含 Vault 初始化）
 ```
 
-### 8.2 记忆库管理
+### 9.2 记忆库管理
 
 ```http
-POST /api/vault/select
-POST /api/vault/scan
-GET  /api/vault/status
+POST /api/vault/select          # 选择/创建记忆库
+POST /api/vault/scan            # 扫描记忆库 Markdown 文件
+GET  /api/vault/status          # 记忆库状态
 ```
 
-### 8.3 记忆 CRUD
+### 9.3 记忆 CRUD
 
 ```http
-GET    /api/memories
-GET    /api/memories/{memory_id}
-POST   /api/memories
-PUT    /api/memories/{memory_id}
-DELETE /api/memories/{memory_id}
+GET    /api/memories            # 列出所有记忆（支持排序）
+GET    /api/memories/{id}       # 获取单条记忆
+POST   /api/memories            # 创建记忆
+PUT    /api/memories/{id}       # 更新记忆
+PATCH  /api/memories/{id}       # 切换置顶
+DELETE /api/memories/{id}       # 删除记忆
 ```
 
-### 8.4 索引
+### 9.4 索引
 
 ```http
-POST /api/index/rebuild
-POST /api/index/update
-GET  /api/index/status
+POST /api/index/rebuild         # 重建索引
+POST /api/index/update          # 先扫描后重建
+GET  /api/index/status          # 索引状态
 ```
 
-### 8.5 检索
+### 9.5 检索
 
 ```http
 POST /api/retrieve
@@ -442,29 +496,33 @@ POST /api/retrieve
       "title": "个人长期 Agent 项目方向",
       "score": 0.91,
       "reason": "语义相似 + 双链关联",
-      "path": "Memories/Projects/personal_agent.md"
+      "path": "Memories/Projects/personal_agent.md",
+      "content": "用户正在开发...",
+      "type": "project",
+      "tags": ["Agent", "长期记忆"]
     }
   ]
 }
 ```
 
-### 8.6 聊天
+### 9.6 聊天
 
 ```http
-GET  /api/conversations
-POST /api/conversations
-GET  /api/conversations/{conversation_id}/messages
-POST /api/chat
+GET    /api/conversations             # 列出会话（支持搜索）
+POST   /api/conversations             # 创建会话（复用空草稿）
+PATCH  /api/conversations/{id}        # 置顶/取消置顶
+DELETE /api/conversations/{id}        # 删除会话
+GET    /api/conversations/{id}/messages  # 获取会话消息与唤醒记忆
+POST   /api/chat                      # 发送消息（自动 RAG）
 ```
 
-聊天消息会写入 SQLite 的 `conversations` / `messages` 表。`POST /api/chat` 若未传 `conversation_id` 会自动创建新会话；若传入已有 `conversation_id`，后端会读取该会话最近消息作为短期上下文，并和长期记忆检索结果一起注入 LLM Prompt。
-
-请求体：
+`POST /api/chat` 请求体：
 
 ```json
 {
   "conversation_id": "conv_001",
-  "message": "我这个 Agent 项目第一版应该先做什么？"
+  "message": "我这个 Agent 项目第一版应该先做什么？",
+  "chat_model_id": "deepseek_chat"
 }
 ```
 
@@ -472,30 +530,35 @@ POST /api/chat
 
 ```json
 {
+  "conversation_id": "conv_001",
   "answer": "第一版建议先完成本地 Markdown 记忆库扫描、Embedding 索引和混合检索闭环...",
   "used_memories": [
-    {
-      "memory_id": "mem_20260523_001",
-      "title": "个人长期 Agent 项目方向",
-      "score": 0.91
-    }
-  ]
+    { "memory_id": "mem_20260523_001", "title": "个人长期 Agent 项目方向", "score": 0.91 }
+  ],
+  "memory_suggestions": [],
+  "memory_index_refresh_required": false
 }
 ```
 
-### 8.7 记忆建议
+### 9.7 记忆建议
 
 ```http
-POST /api/memory-suggestions/generate
-GET  /api/memory-suggestions
-POST /api/memory-suggestions/{suggestion_id}/accept
-POST /api/memory-suggestions/{suggestion_id}/reject
-POST /api/memory-suggestions/{suggestion_id}/edit
+POST /api/memory-suggestions/generate           # 从对话生成候选记忆
+GET  /api/memory-suggestions                     # 列出所有候选
+POST /api/memory-suggestions/{id}/accept         # 接受（写入 Markdown + 重建索引）
+POST /api/memory-suggestions/{id}/reject         # 拒绝
+POST /api/memory-suggestions/{id}/edit           # 编辑后写入
+```
+
+### 9.8 模型提供者
+
+```http
+GET /api/provider-models/openrouter?capability=chat      # 拉取 OpenRouter 模型目录
 ```
 
 ---
 
-## 9. 记忆写入策略
+## 10. 记忆写入策略
 
 ### 应该保存
 
@@ -512,34 +575,39 @@ POST /api/memory-suggestions/{suggestion_id}/edit
 
 - **新增记忆**：用户提供了新的长期信息。
 - **更新记忆**：已有信息发生变化。
-- **废弃记忆**：旧信息已经不再成立。
+- **废弃记忆**：旧信息已经不再成立（archive）。
 - **合并记忆**：多个碎片指向同一主题。
 - **忽略记忆**：信息不值得长期保存。
 
 ---
 
-## 10. Prompt 设计
+## 11. Prompt 设计
 
-### 10.1 检索增强回答
+### 11.1 检索增强回答
 
 ```text
-你是用户的个人长期 Agent。你需要基于用户当前问题和系统检索出的长期记忆进行回答。
+你是用户的个人 Agent。下面提供的是帮助回答当前问题的背景上下文。
 
 要求：
-1. 优先使用已提供的记忆内容。
-2. 如果记忆不足，明确说明哪些部分是推断。
-3. 不要编造用户没有提供过的个人信息。
-4. 回答应具体、可执行，适合用户当前学习或工作场景。
-5. 如果引用了记忆，请在内部保持来源对应，便于前端展示。
+1. 使用相关背景来提高回答的准确性，但不要主动提及记忆库、检索过程或上下文注入机制。
+2. 同一会话内的历史对话是短期上下文，必须用于理解代词、省略和连续问题。
+3. 当引用用户过去已经表达的目标、偏好或决定有帮助时，可以自然地说"你之前提到……"。
+4. 只有当用户询问依据、背景存在冲突或不确定性会影响结论时，才解释信息来源或推断边界。
+5. 如果背景不足，不要将推断包装成用户已确认的信息。
+6. 不要编造用户没有提供过的个人信息。
+7. 回答应具体、可执行。
+
+本次会话历史：
+{history}
 
 用户问题：
 {user_message}
 
-相关记忆：
-{retrieved_memories}
+相关背景：
+{context}
 ```
 
-### 10.2 记忆提取
+### 11.2 记忆提取
 
 ```text
 你是一个长期记忆提取器。请从以下对话中判断是否存在值得保存到长期记忆库的信息。
@@ -559,186 +627,91 @@ POST /api/memory-suggestions/{suggestion_id}/edit
 - 低置信度猜测
 - 用户没有明确表达的敏感信息
 
-请输出 JSON：
-[
-  {
-    "action": "create | update | archive | ignore",
-    "title": "记忆标题",
-    "type": "profile | project | concept | task | log",
-    "content": "记忆正文",
-    "tags": ["标签1", "标签2"],
-    "importance": 1,
-    "confidence": 0.9,
-    "target_note_id": null,
-    "reason": "为什么值得保存或更新"
-  }
-]
-
-对话内容：
-{conversation}
-
-已有相关记忆：
-{related_memories}
+请只输出 JSON 数组，不要输出解释文字。
+...
 ```
 
 ---
 
-## 11. 用户界面布局
+## 12. 用户界面
 
-### 11.1 Chat 页面
+### 12.1 Chat 页面
 
-```text
-┌──────────────┬────────────────────────────┬──────────────────────┐
-│ 会话列表      │          Agent 对话          │      唤醒的记忆        │
-│              │                            │                      │
-│ 学习规划      │  用户：帮我整理项目路线       │  1. Agent 项目方向     │
-│ 项目复盘      │  Agent：根据你的长期记忆...   │  2. 白盒记忆系统       │
-│ 论文阅读      │                            │  3. 双轨制检索         │
-└──────────────┴────────────────────────────┴──────────────────────┘
-```
+三栏布局：会话列表 | Agent 对话 | 唤醒的记忆来源
 
-### 11.2 Memory 页面
+- 左侧：会话列表（支持搜索、置顶、右键菜单删除）
+- 中间：对话窗口（Markdown 渲染，含代码高亮和 LaTeX）
+- 右侧：当前回答使用的记忆来源及评分
+- 底部：Composer 输入框，支持模型切换
 
-```text
-┌──────────────┬────────────────────────────────────────┐
-│ 文件树        │              Markdown 记忆内容          │
-│              │                                        │
-│ Profile      │  # 个人长期 Agent 项目方向               │
-│ Projects     │  tags: Agent, Markdown, Embedding       │
-│ Concepts     │                                        │
-│ Tasks        │  用户正在开发一个面向学习与工作的...      │
-└──────────────┴────────────────────────────────────────┘
-```
+### 12.2 Memory 页面
 
-### 11.3 Review 页面
+双栏布局：文件树 | Markdown 记忆内容
 
-```text
-Agent 建议保存以下长期记忆：
+- 按类型目录（Profile/Projects/Concepts/Tasks/Logs）组织
+- YAML frontmatter 元数据显示
+- 双链引用解析与展示
 
-[新增] 个人长期 Agent 项目方向
-原因：这是用户正在推进的长期项目，对后续回答有持续帮助。
+### 12.3 Review 页面
 
-[更新] 软件形态选择
-原因：用户已经明确倾向于独立应用，而不是 Obsidian 插件。
+列出 Agent 生成的候选记忆列表，每条包含：
 
-按钮：
-[保存] [编辑后保存] [忽略]
-```
+- 操作类型：新增 / 更新 / 废弃
+- 标题、内容、类型、标签
+- 置信度与重要性
+- LLM 给出的保存理由
+- 操作按钮：[接受] [拒绝]
 
----
+支持手动审查与自动接受两种模式。
 
-## 12. MVP 与开发路线
+### 12.4 Settings 页面
 
-### 12.1 MVP 必做功能
+四组配置：
 
-- 选择本地记忆库文件夹，自动创建基础目录结构。
-- 扫描 Markdown 文件，解析 YAML frontmatter、标签和双链。
-- 建立 SQLite 元数据索引和 Embedding 向量索引。
-- 支持关键词检索、双链图谱扩展、混合检索排序。
-- 实现聊天窗口，显示本次回答调用的记忆来源。
-- 从对话中生成候选记忆，用户确认后写入 Markdown。
-
-### 12.2 MVP 暂不做
-
-多 Agent 协作、自动操作电脑、邮件/日历集成、云同步、插件市场、移动端、团队协作、复杂权限系统。
-
-### 12.3 开发阶段
-
-**Phase 0：项目初始化**
-- 初始化 Electron + React + TypeScript 前端。
-- 初始化 Python + FastAPI 后端。
-- 建立前后端通信，完成基础页面框架。
-
-**Phase 1：本地记忆库管理**
-- 实现选择文件夹，自动创建 `Memories/`、`Inbox/`、`Attachments/`、`.agent/`。
-- 扫描 Markdown 文件，解析标题、正文、YAML、tags 和双链。
-- 将元数据写入 SQLite，前端展示记忆列表。
-
-**Phase 2：索引系统**
-- 实现文本切块，接入 Embedding 模型。
-- 建立向量索引和关键词全文索引。
-- 支持手动重新索引和基于文件 hash 的增量更新。
-
-**Phase 3：混合检索**
-- 实现语义检索、关键词检索、双链扩展、综合评分。
-- 前端展示检索结果和命中原因。
-
-**Phase 4：聊天 Agent**
-- 实现聊天会话，聊天时自动检索相关记忆。
-- 将记忆上下文注入 LLM，返回回答，右侧显示被唤醒的记忆来源。
-
-**Phase 5：记忆写入闭环**
-- 对话结束后提取候选记忆（区分新增、更新、废弃）。
-- 在 Review 页面展示，用户确认后写入 Markdown 并自动更新索引。
-
-**Phase 6：产品化增强**
-- 文件变化自动监听、Markdown 编辑器增强、记忆图谱可视化。
-- 多模型配置、本地模型支持、数据导入导出、UI 美化与打包发布。
+| 分组 | 配置项 |
+| --- | --- |
+| Vault | 选择/创建记忆库，扫描状态 |
+| Review | 手动审查 / 自动接受 |
+| Models | DeepSeek / Ollama / OpenRouter 连接配置，模型管理与分配 |
+| Appearance | 主题切换（默认 / Dark / 暖黄） |
 
 ---
 
-## 13. 安装与运行
+## 13. 开发路线
 
-```bash
-# 启动后端
-cd backend
-python -m venv .venv
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
-# macOS / Linux
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
+### ✅ 已完成（MVP）
 
-# 启动前端
-cd frontend
-npm install
-npm run dev
+- 本地记忆库初始化与目录创建
+- Markdown 文件扫描、YAML frontmatter、标签和双链解析
+- SQLite 元数据索引 + FTS5 全文索引
+- Embedding 向量索引（Ollama bge-m3 / LocalHash fallback / OpenRouter）
+- ChromaDB 向量存储（fallback JSON）
+- 混合检索：语义 + 关键词 + 双链扩展 + 综合评分
+- 聊天会话管理（新建、搜索、置顶、删除）
+- RAG 聊天：检索增强回答 + 记忆来源展示
+- 对话历史上下文窗口管理（token 预算控制）
+- 候选记忆生成（LLM 提取）+ 用户审查确认
+- 记忆 CRUD：增删改查、置顶
+- 审查模式：手动 / 自动
+- 多模型配置体系（DeepSeek / Ollama / OpenRouter）
+- 主题切换
+- 记忆索引自动刷新
 
-# 启动桌面应用
-npm run electron:dev
-```
+### 🔜 规划中
 
-当前 MVP 已按上述结构实现，开发期默认前后端分跑：
-
-```powershell
-# Terminal 1: FastAPI
-cd D:\VS_project\LuminaMind\backend
-.\.venv\Scripts\Activate.ps1
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
-
-# Terminal 2: Vite
-cd D:\VS_project\LuminaMind\frontend
-npm run dev
-
-# Terminal 3: Electron
-cd D:\VS_project\LuminaMind\frontend
-npm run electron:dev
-```
-
-验证命令：
-
-```powershell
-cd D:\VS_project\LuminaMind\backend
-.\.venv\Scripts\python.exe -m pytest tests
-
-cd D:\VS_project\LuminaMind\frontend
-npm test -- --run
-npm run build
-```
-
-模型默认值：
-
-- LLM：可在 Settings 中选择 `deepseek` 或 `ollama`。
-- DeepSeek 默认模型：`deepseek-chat`。
-- Ollama 默认聊天模型：`qwen2.5:7b`。
-- Embedding 固定使用 Ollama `bge-m3`，若本地 Ollama 不可用，MVP 会回退到本地 hash embedding，以便开发和测试闭环不断。
+- 文件变化自动监听（watchdog / chokidar）
+- Markdown 编辑器增强
+- 记忆图谱可视化
+- 本地模型支持（llama.cpp / Ollama 深度集成）
+- 数据导入导出
+- 多 Agent 协作
+- 插件系统
 
 ---
 
 ## 14. 环境变量
 
-后端 `.env` 示例：
+后端 `.env` 示例（可选，大部分配置可通过 Settings 页面管理）：
 
 ```env
 APP_ENV=development
@@ -748,10 +721,15 @@ APP_PORT=8000
 LLM_PROVIDER=openai
 OPENAI_API_KEY=your_api_key_here
 OPENAI_MODEL=gpt-4o-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 
 VECTOR_STORE=chroma
 SQLITE_DB_PATH=.agent/index.db
+```
+
+前端可通过环境变量配置 API 地址：
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 ---
@@ -764,4 +742,4 @@ SQLITE_DB_PATH=.agent/index.db
 
 优先保证：记忆格式清晰、检索链路稳定、用户可见 Agent 使用了哪些记忆、用户可控制哪些内容被长期保存、Markdown 记忆库可独立存在。
 
-只要完成本地 Markdown 扫描 → Embedding 索引 → 双链解析 → 混合检索 → 基于记忆的聊天回答 → 候选记忆审查写入 这个闭环，项目核心 Demo 即可成立。
+已完成本地 Markdown 扫描 → Embedding 索引 → 双链解析 → 混合检索 → 基于记忆的聊天回答 → 候选记忆审查写入 的完整闭环。
