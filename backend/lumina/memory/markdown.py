@@ -75,6 +75,7 @@ def parse_markdown_note(raw: str, path: Path) -> MemoryNote:
         confidence=float(metadata.get("confidence") or 0.9),
         source=str(metadata.get("source") or "manual"),
         status=metadata.get("status") or "active",
+        pinned=bool(metadata.get("pinned", False)),
         created=created,
         updated=updated,
         links=links,
@@ -94,6 +95,7 @@ def build_markdown(
     confidence: float = 0.9,
     source: str = "manual",
     status: str = "active",
+    pinned: bool = False,
     note_id: str | None = None,
     created: str | None = None,
     updated: str | None = None,
@@ -109,10 +111,10 @@ def build_markdown(
         "confidence": confidence,
         "source": source,
         "status": status,
+        "pinned": pinned,
         "created": created or today,
         "updated": updated or today,
         "links": normalized_links,
     }
     frontmatter = yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False).strip()
     return f"---\n{frontmatter}\n---\n\n{content.strip()}\n"
-

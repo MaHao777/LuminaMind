@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from .config import AppSettings
 from .db import connect
@@ -65,7 +66,13 @@ def rebuild_index(
 
     vector_path = _fallback_vector_path(vault_root)
     vector_path.parent.mkdir(parents=True, exist_ok=True)
-    vector_path.write_text(json.dumps(vectors, ensure_ascii=False), encoding="utf-8")
+    temporary_path = vector_path.with_name(f".{vector_path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary_path.write_text(json.dumps(vectors, ensure_ascii=False), encoding="utf-8")
+        temporary_path.replace(vector_path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
     vector_store = "fallback-json"
     try:
@@ -107,4 +114,3 @@ def load_vectors(vault_root: Path) -> list[dict]:
     if not path.exists():
         return []
     return json.loads(path.read_text(encoding="utf-8"))
-

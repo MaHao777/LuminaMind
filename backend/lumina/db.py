@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS notes (
     confidence REAL DEFAULT 0.9,
     source TEXT DEFAULT 'manual',
     status TEXT DEFAULT 'active',
+    pinned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT,
     updated_at TEXT,
     file_hash TEXT
@@ -57,6 +58,16 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS conversation_used_memories (
+    conversation_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    memory_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    score REAL NOT NULL,
+    PRIMARY KEY (conversation_id, position),
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
@@ -118,12 +129,41 @@ def _prune_disposable_conversation_drafts(conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM conversations WHERE id = ?", (draft["id"],))
 
 
+def _backfill_default_conversation_titles(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE conversations
+        SET title = (
+            SELECT substr(messages.content, 1, 40)
+            FROM messages
+            WHERE messages.conversation_id = conversations.id
+              AND messages.role = 'user'
+            ORDER BY messages.rowid ASC
+            LIMIT 1
+        )
+        WHERE conversations.title = 'New conversation'
+          AND EXISTS (
+              SELECT 1
+              FROM messages
+              WHERE messages.conversation_id = conversations.id
+                AND messages.role = 'user'
+          )
+        """
+    )
+
+
 def initialize_database(vault_root: Path) -> None:
     with connect(vault_root) as conn:
         conn.executescript(SCHEMA)
+        note_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(notes)").fetchall()
+        }
+        if "pinned" not in note_columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         conversation_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
         }
         if "pinned" not in conversation_columns:
             conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        _backfill_default_conversation_titles(conn)
         _prune_disposable_conversation_drafts(conn)

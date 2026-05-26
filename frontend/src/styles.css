@@ -271,7 +271,8 @@ p {
   font-size: 12px;
 }
 
-.conversation-pin {
+.conversation-pin,
+.memory-pin {
   position: absolute;
   top: 11px;
   right: 10px;
@@ -560,10 +561,12 @@ p {
 }
 
 .memory-row {
+  position: relative;
   display: grid;
   justify-content: stretch;
   width: 100%;
   min-height: 64px;
+  padding-right: 30px;
   color: #1d2329;
   text-align: left;
 }
@@ -665,6 +668,17 @@ p {
   border: 1px solid #d1d9e0;
   padding: 6px 8px;
   text-align: left;
+}
+
+.postprocess-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.postprocess-banner .icon-text-button {
+  flex: 0 0 auto;
 }
 
 .markdown-content th {
@@ -906,6 +920,7 @@ pre {
   --ui-badge: #d43c3c;
   color: var(--ui-text);
   background: var(--ui-app);
+  transition: grid-template-columns 180ms ease;
 }
 
 .app-shell[data-theme="dark"] {
@@ -993,6 +1008,7 @@ pre {
 .app-shell .sidebar {
   border-color: var(--ui-border);
   background: var(--ui-sidebar);
+  transition: gap 180ms ease, padding 180ms ease;
 }
 
 .app-shell .panel,
@@ -1139,11 +1155,31 @@ pre {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  transition: gap 180ms ease;
 }
 
 .sidebar-toggle {
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+.brand {
+  transition: gap 180ms ease;
+}
+
+.brand-copy,
+.nav-label,
+.sidebar-status span {
+  display: inline-block;
+  max-width: 170px;
+  opacity: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 180ms ease, opacity 120ms ease;
+}
+
+.nav-item {
+  transition: gap 180ms ease;
 }
 
 .app-shell.sidebar-collapsed {
@@ -1164,7 +1200,9 @@ pre {
 .sidebar-collapsed .brand-copy,
 .sidebar-collapsed .nav-label,
 .sidebar-collapsed .sidebar-status span {
-  display: none;
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-collapsed .sidebar-toggle {
@@ -1173,6 +1211,7 @@ pre {
 
 .sidebar-collapsed .nav-item {
   position: relative;
+  gap: 0;
   justify-content: center;
   padding: 0;
 }
@@ -1188,6 +1227,10 @@ pre {
 
 .sidebar-collapsed .sidebar-status {
   justify-content: center;
+}
+
+.sidebar-collapsed .brand-identity {
+  gap: 0;
 }
 
 .search-field {
@@ -1216,6 +1259,18 @@ pre {
   border-color: transparent !important;
   background: transparent !important;
   color: var(--ui-muted) !important;
+}
+
+.memory-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 108px;
+  gap: 8px;
+}
+
+.memory-toolbar select {
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 13px;
 }
 
 .conversation-list {
@@ -1356,5 +1411,18 @@ pre {
   .settings-grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(180px, auto) minmax(320px, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell,
+  .app-shell .sidebar,
+  .app-shell .brand,
+  .app-shell .brand-identity,
+  .app-shell .brand-copy,
+  .app-shell .nav-item,
+  .app-shell .nav-label,
+  .app-shell .sidebar-status span {
+    transition: none;
   }
 }

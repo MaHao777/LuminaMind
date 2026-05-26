@@ -74,14 +74,16 @@ def build_rag_prompt(
         f"[{index + 1}] {memory.title}\n{memory.content}" for index, memory in enumerate(memories)
     )
     history = _format_conversation_history(conversation_history)
-    return f"""你是用户的个人长期 Agent。请基于检索出的长期记忆回答。
+    return f"""你是用户的个人 Agent。下面提供的是帮助回答当前问题的背景上下文。
 
 要求：
-1. 优先使用已提供的记忆内容。
+1. 使用相关背景来提高回答的准确性，但不要主动提及记忆库、检索过程或上下文注入机制。
 2. 同一会话内的历史对话是短期上下文，必须用于理解代词、省略和连续问题。
-3. 如果记忆不足，明确说明哪些部分是推断。
-4. 不要编造用户没有提供过的个人信息。
-5. 回答应具体、可执行。
+3. 当引用用户过去已经表达的目标、偏好或决定有帮助时，可以自然地说“你之前提到……”。
+4. 只有当用户询问依据、背景存在冲突或不确定性会影响结论时，才解释信息来源或推断边界。
+5. 如果背景不足，不要将推断包装成用户已确认的信息。
+6. 不要编造用户没有提供过的个人信息。
+7. 回答应具体、可执行。
 
 本次会话历史：
 {history}
@@ -89,7 +91,7 @@ def build_rag_prompt(
 用户问题：
 {user_message}
 
-相关记忆：
+相关背景：
 {context}
 """
 

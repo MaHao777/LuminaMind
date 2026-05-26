@@ -4,7 +4,7 @@ import pytest
 
 from lumina.config import AppSettings
 from lumina.indexer import rebuild_index
-from lumina.llm import _call_deepseek, _call_ollama
+from lumina.llm import _call_deepseek, _call_ollama, build_rag_prompt
 from lumina.memory.markdown import build_markdown, parse_markdown_note
 from lumina.memory.store import create_memory, list_memories, scan_vault
 from lumina.retrieval import retrieve_memories
@@ -87,6 +87,28 @@ def test_scan_vault_indexes_markdown_metadata_and_links(tmp_path: Path) -> None:
     assert memories[0].links == ["白盒化记忆系统"]
 
 
+def test_memory_markdown_roundtrips_pinned_metadata(tmp_path: Path) -> None:
+    raw = build_markdown(
+        title="Pinned memory",
+        note_type="project",
+        content="Keep this memory near the top.",
+        pinned=True,
+    )
+
+    note = parse_markdown_note(raw, tmp_path / "pinned.md")
+
+    assert "pinned: true" in raw
+    assert note.pinned is True
+
+
+def test_rag_prompt_uses_retrieved_context_without_exposing_internal_memory_mechanics() -> None:
+    prompt = build_rag_prompt("What should I do next?", [], [])
+
+    assert "不要主动提及记忆库、检索过程或上下文注入机制" in prompt
+    assert "你之前提到" in prompt
+    assert "请基于检索出的长期记忆回答" not in prompt
+
+
 def test_retrieve_memories_fuses_keyword_link_importance_and_vector_scores(tmp_path: Path) -> None:
     vault = initialize_vault(tmp_path / "vault")
     create_memory(
@@ -121,6 +143,27 @@ def test_retrieve_memories_fuses_keyword_link_importance_and_vector_scores(tmp_p
     assert results[0].title == "LuminaMind 技术路线"
     assert results[0].score > 0
     assert "关键词" in results[0].reason or "语义" in results[0].reason
+
+
+def test_rebuild_index_publishes_fallback_vectors_by_atomic_replace(tmp_path: Path, monkeypatch) -> None:
+    vault = initialize_vault(tmp_path / "atomic-vector-vault")
+    create_memory(vault.root, title="Atomic index", content="Index this content.", note_type="project")
+    replacements: list[tuple[Path, Path]] = []
+    original_replace = Path.replace
+
+    def tracked_replace(source: Path, target: Path):
+        replacements.append((source, target))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", tracked_replace)
+
+    rebuild_index(vault.root, embedding_provider=None)
+
+    vector_path = vault.root / ".agent" / "vector_index" / "fallback_vectors.json"
+    assert replacements
+    assert replacements[-1][1] == vector_path
+    assert replacements[-1][0] != vector_path
+    assert vector_path.exists()
 
 
 def test_settings_roundtrip_prefers_vault_config(tmp_path: Path) -> None:

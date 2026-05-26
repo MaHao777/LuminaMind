@@ -50,6 +50,7 @@ def _row_to_note(row) -> MemoryNote:
         confidence=row["confidence"] or 0.9,
         source=row["source"] or "manual",
         status=row["status"] or "active",
+        pinned=bool(row["pinned"]),
         created=row["created_at"] or "",
         updated=row["updated_at"] or "",
         links=[],
@@ -74,9 +75,9 @@ def upsert_note(vault_root: Path, note: MemoryNote) -> None:
             """
             INSERT INTO notes (
                 id, title, path, type, tags, content, importance, confidence,
-                source, status, created_at, updated_at, file_hash
+                source, status, pinned, created_at, updated_at, file_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 path=excluded.path,
@@ -87,6 +88,7 @@ def upsert_note(vault_root: Path, note: MemoryNote) -> None:
                 confidence=excluded.confidence,
                 source=excluded.source,
                 status=excluded.status,
+                pinned=excluded.pinned,
                 created_at=excluded.created_at,
                 updated_at=excluded.updated_at,
                 file_hash=excluded.file_hash
@@ -102,6 +104,7 @@ def upsert_note(vault_root: Path, note: MemoryNote) -> None:
                 note.confidence,
                 note.source,
                 note.status,
+                int(note.pinned),
                 note.created,
                 note.updated,
                 note.file_hash,
@@ -149,7 +152,7 @@ def scan_vault(vault_root: Path) -> ScanSummary:
 
 def list_memories(vault_root: Path) -> list[MemoryNote]:
     with connect(vault_root) as conn:
-        rows = conn.execute("SELECT * FROM notes ORDER BY updated_at DESC, title ASC").fetchall()
+        rows = conn.execute("SELECT * FROM notes ORDER BY pinned DESC, updated_at DESC, title ASC").fetchall()
     return [_hydrate_links(vault_root, _row_to_note(row)) for row in rows]
 
 
@@ -200,8 +203,35 @@ def update_memory(vault_root: Path, memory_id: str, **kwargs) -> MemoryNote | No
         confidence=data.confidence,
         source=data.source,
         status=data.status,
+        pinned=current.pinned,
         note_id=current.id,
         created=current.created,
+    )
+    path = Path(current.path)
+    path.write_text(raw, encoding="utf-8")
+    note = parse_markdown_note(raw, path.resolve())
+    upsert_note(vault_root, note)
+    return note
+
+
+def update_memory_pin(vault_root: Path, memory_id: str, pinned: bool) -> MemoryNote | None:
+    current = get_memory(vault_root, memory_id)
+    if current is None:
+        return None
+    raw = build_markdown(
+        title=current.title,
+        note_type=current.type,
+        content=current.content,
+        tags=current.tags,
+        links=current.links,
+        importance=current.importance,
+        confidence=current.confidence,
+        source=current.source,
+        status=current.status,
+        pinned=pinned,
+        note_id=current.id,
+        created=current.created,
+        updated=current.updated,
     )
     path = Path(current.path)
     path.write_text(raw, encoding="utf-8")

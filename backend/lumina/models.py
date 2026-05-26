@@ -23,6 +23,7 @@ class MemoryNote(BaseModel):
     confidence: float = Field(default=0.9, ge=0, le=1)
     source: str = "manual"
     status: MemoryStatus = "active"
+    pinned: bool = False
     created: str = Field(default_factory=lambda: date.today().isoformat())
     updated: str = Field(default_factory=lambda: date.today().isoformat())
     links: list[str] = Field(default_factory=list)
@@ -44,6 +45,10 @@ class MemoryCreate(BaseModel):
 
 class MemoryUpdate(MemoryCreate):
     pass
+
+
+class MemoryPinUpdate(BaseModel):
+    pinned: bool
 
 
 class VaultInfo(BaseModel):
@@ -137,6 +142,7 @@ class ChatResponse(BaseModel):
     answer: str
     used_memories: list[UsedMemory]
     memory_suggestions: list[MemorySuggestion] = Field(default_factory=list)
+    memory_index_refresh_required: bool = False
 
 
 class GenerateSuggestionsRequest(BaseModel):

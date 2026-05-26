@@ -15,11 +15,21 @@ from lumina.conversations import (
     list_conversations,
     load_chat_messages,
     load_messages,
+    load_used_memories,
+    save_used_memories,
     update_conversation_pin,
 )
 from lumina.indexer import index_status, rebuild_index
 from lumina.llm import ContextWindowExceededError, LLMUnavailableError, generate_answer, select_conversation_history
-from lumina.memory.store import create_memory, delete_memory, get_memory, list_memories, scan_vault, update_memory
+from lumina.memory.store import (
+    create_memory,
+    delete_memory,
+    get_memory,
+    list_memories,
+    scan_vault,
+    update_memory,
+    update_memory_pin,
+)
 from lumina.models import (
     ChatRequest,
     ChatResponse,
@@ -27,6 +37,7 @@ from lumina.models import (
     ConversationUpdate,
     GenerateSuggestionsRequest,
     MemoryCreate,
+    MemoryPinUpdate,
     MemoryUpdate,
     RetrievalRequest,
     SelectVaultRequest,
@@ -66,13 +77,9 @@ def require_vault() -> Path:
     return state.vault_root
 
 
-def ensure_chat_memory_index(vault_root: Path, settings: AppSettings) -> None:
+def chat_memory_index_refresh_required(vault_root: Path) -> bool:
     status = index_status(vault_root)
-    if status["indexed_notes"] == 0:
-        scan_vault(vault_root)
-        status = index_status(vault_root)
-    if status["indexed_notes"] > 0 and status["indexed_chunks"] == 0:
-        rebuild_index(vault_root, settings=settings)
+    return status["indexed_notes"] == 0 or status["indexed_chunks"] == 0
 
 
 @app.get("/api/settings")
@@ -165,6 +172,14 @@ def api_update_memory(memory_id: str, payload: MemoryUpdate) -> dict:
     return memory.model_dump()
 
 
+@app.patch("/api/memories/{memory_id}")
+def api_update_memory_pin(memory_id: str, payload: MemoryPinUpdate) -> dict:
+    memory = update_memory_pin(require_vault(), memory_id, payload.pinned)
+    if memory is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return memory.model_dump()
+
+
 @app.delete("/api/memories/{memory_id}")
 def api_delete_memory(memory_id: str) -> dict:
     vault_root = require_vault()
@@ -244,16 +259,20 @@ def api_get_conversation_messages(conversation_id: str) -> dict:
     try:
         get_conversation(require_vault(), conversation_id)
         messages = load_chat_messages(require_vault(), conversation_id)
+        used_memories = load_used_memories(require_vault(), conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found") from None
-    return {"messages": [message.model_dump() for message in messages]}
+    return {
+        "messages": [message.model_dump() for message in messages],
+        "used_memories": [memory.model_dump() for memory in used_memories],
+    }
 
 
 @app.post("/api/chat")
 def api_chat(payload: ChatRequest) -> dict:
     vault_root = require_vault()
     settings = AppSettings.load(vault_root)
-    ensure_chat_memory_index(vault_root, settings)
+    memory_index_refresh_required = chat_memory_index_refresh_required(vault_root)
     all_history = load_messages(vault_root, payload.conversation_id) if payload.conversation_id else []
     memories = retrieve_memories(vault_root, payload.message, settings=settings)
     try:
@@ -267,15 +286,17 @@ def api_chat(payload: ChatRequest) -> dict:
     conversation_id = ensure_conversation(vault_root, payload.conversation_id, payload.message[:40])
     add_message(vault_root, conversation_id, "user", payload.message)
     add_message(vault_root, conversation_id, "assistant", answer)
-    suggestions = generate_suggestions(vault_root, conversation_id, settings=settings)
+    used_memories = [
+        UsedMemory(memory_id=memory.memory_id, title=memory.title, score=memory.score)
+        for memory in memories[:8]
+    ]
+    save_used_memories(vault_root, conversation_id, used_memories)
     response = ChatResponse(
         conversation_id=conversation_id,
         answer=answer,
-        used_memories=[
-            UsedMemory(memory_id=memory.memory_id, title=memory.title, score=memory.score)
-            for memory in memories[:8]
-        ],
-        memory_suggestions=suggestions,
+        used_memories=used_memories,
+        memory_suggestions=[],
+        memory_index_refresh_required=memory_index_refresh_required,
     )
     return response.model_dump()
 

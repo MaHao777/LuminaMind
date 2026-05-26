@@ -13,6 +13,7 @@ const sampleMemory = {
   importance: 5,
   confidence: 0.9,
   status: "active",
+  pinned: false,
   source: "manual",
   created: "2026-05-23",
   updated: "2026-05-23",
@@ -38,8 +39,10 @@ vi.mock("../services/api", () => ({
   selectVault: vi.fn(async (path: string) => ({ path })),
   scanVault: vi.fn(async () => ({ scanned_files: 1, indexed_notes: 1, skipped_files: 0 })),
   rebuildIndex: vi.fn(async () => ({ indexed_chunks: 1 })),
+  updateIndex: vi.fn(async () => ({ indexed_chunks: 1 })),
   listMemories: vi.fn(async () => ({ memories: [sampleMemory] })),
   deleteMemory: vi.fn(async () => ({ deleted: true })),
+  updateMemoryPin: vi.fn(async (id: string, pinned: boolean) => ({ ...sampleMemory, id, pinned })),
   listConversations: vi.fn(async () => ({
     conversations: [
       {
@@ -86,6 +89,7 @@ vi.mock("../services/api", () => ({
         created_at: "2026-05-23T10:01:00",
       },
     ],
+    used_memories: [],
   })),
   sendChat: vi.fn(async () => ({
     conversation_id: "conv_saved",
@@ -107,7 +111,9 @@ vi.mock("../services/api", () => ({
         status: "pending",
       },
     ],
+    memory_index_refresh_required: false,
   })),
+  generateSuggestions: vi.fn(async () => ({ suggestions: [] })),
   listSuggestions: vi.fn(async () => ({
     suggestions: [
       {
@@ -270,7 +276,48 @@ describe("LuminaMind MVP frontend", () => {
     expect(await screen.findByText("No memories match your search.")).toBeInTheDocument();
   });
 
-  it("confirms and deletes the selected memory", async () => {
+  it("filters memories by type together with keyword search and resets the selected note", async () => {
+    vi.mocked(api.listMemories).mockResolvedValueOnce({
+      memories: [
+        { ...sampleMemory, title: "Project record", content: "shared phrase" },
+        {
+          ...sampleMemory,
+          id: "mem_profile",
+          title: "Profile record",
+          type: "profile",
+          path: "Memories/Profile/preference.md",
+          content: "shared phrase",
+        },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Project record" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Filter memories by type"), { target: { value: "profile" } });
+    expect(await screen.findByRole("heading", { level: 2, name: "Profile record" })).toBeInTheDocument();
+    expect(screen.queryByText("Project record")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search memories"), { target: { value: "project" } });
+    expect(await screen.findByText("No memories match your filters.")).toBeInTheDocument();
+  });
+
+  it("opens the memory context menu, pins a note, and displays its pinned state", async () => {
+    vi.mocked(api.listMemories).mockResolvedValueOnce({ memories: [sampleMemory] });
+    vi.mocked(api.updateMemoryPin).mockResolvedValueOnce({ ...sampleMemory, pinned: true });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    const row = await screen.findByRole("button", { name: sampleMemory.title });
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: `Pin ${sampleMemory.title}` }));
+
+    await waitFor(() => expect(api.updateMemoryPin).toHaveBeenCalledWith("mem_1", true));
+    expect(await screen.findByLabelText(`Pinned ${sampleMemory.title}`)).toBeInTheDocument();
+  });
+
+  it("confirms and deletes a memory from its context menu", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(api.listMemories)
       .mockResolvedValueOnce({ memories: [sampleMemory] })
@@ -279,7 +326,8 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Memory" }));
     await screen.findByText("Markdown + Embedding + 双链检索。");
-    fireEvent.click(screen.getByRole("button", { name: `Delete ${sampleMemory.title}` }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: sampleMemory.title }), { clientX: 10, clientY: 10 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: `Delete ${sampleMemory.title}` }));
 
     await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith("mem_1"));
     expect(confirm).toHaveBeenCalled();
@@ -297,7 +345,64 @@ describe("LuminaMind MVP frontend", () => {
 
     expect(await screen.findByText("第一版先完成 Markdown 记忆库和混合检索闭环。")).toBeInTheDocument();
     expect(screen.getByText("LuminaMind 技术路线")).toBeInTheDocument();
-    expect(screen.getByText("1 memory suggestion ready for review.")).toBeInTheDocument();
+    await waitFor(() => expect(api.generateSuggestions).toHaveBeenCalledWith("conv_saved"));
+    expect(await screen.findByText("1 memory suggestion ready for review.")).toBeInTheDocument();
+  });
+
+  it("shows replies while post-processing remains queued and serializes later extraction", async () => {
+    let finishFirstExtraction!: () => void;
+    vi.mocked(api.generateSuggestions)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirstExtraction = () => resolve({ suggestions: [] });
+      }))
+      .mockResolvedValueOnce({ suggestions: [] });
+    vi.mocked(api.listSuggestions)
+      .mockResolvedValueOnce({ suggestions: [] })
+      .mockResolvedValueOnce({ suggestions: [] })
+      .mockResolvedValueOnce({ suggestions: [] });
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("第一版先完成 Markdown 记忆库和混合检索闭环。")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.sendChat).toHaveBeenCalledTimes(2));
+    expect(api.generateSuggestions).toHaveBeenCalledTimes(1);
+
+    finishFirstExtraction();
+    await waitFor(() => expect(api.generateSuggestions).toHaveBeenCalledTimes(2));
+  });
+
+  it("refreshes the index before extraction and offers retry after post-processing failure", async () => {
+    vi.mocked(api.listSuggestions)
+      .mockResolvedValueOnce({ suggestions: [] })
+      .mockResolvedValueOnce({ suggestions: [] });
+    vi.mocked(api.sendChat).mockResolvedValueOnce({
+      conversation_id: "conv_saved",
+      answer: "Answer before indexing.",
+      used_memories: [],
+      memory_suggestions: [],
+      memory_index_refresh_required: true,
+    });
+    vi.mocked(api.generateSuggestions)
+      .mockRejectedValueOnce(new Error("Extraction unavailable"))
+      .mockResolvedValueOnce({ suggestions: [] });
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "Needs index" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Answer before indexing.")).toBeInTheDocument();
+    await waitFor(() => expect(api.updateIndex).toHaveBeenCalled());
+    expect(vi.mocked(api.updateIndex).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.generateSuggestions).mock.invocationCallOrder[0],
+    );
+
+    expect(await screen.findByText("Memory update failed: Extraction unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry memory update" }));
+    await waitFor(() => expect(api.generateSuggestions).toHaveBeenCalledTimes(2));
+    expect(api.updateIndex).toHaveBeenCalledTimes(1);
   });
 
   it("does not prompt for review when chat suggestions were automatically accepted", async () => {
@@ -837,6 +942,7 @@ describe("LuminaMind MVP frontend", () => {
         content: `Stored message from ${id}`,
         created_at: "2026-05-23T10:01:00",
       }],
+      used_memories: [],
     }));
     let resolveChat!: (value: Awaited<ReturnType<typeof api.sendChat>>) => void;
     vi.mocked(api.sendChat).mockImplementationOnce(
@@ -867,6 +973,50 @@ describe("LuminaMind MVP frontend", () => {
       memory_suggestions: [],
     });
     expect(await screen.findByText("Completed after returning.")).toBeInTheDocument();
+  });
+
+  it("restores the latest used memories when reloading and reselecting a saved conversation", async () => {
+    vi.mocked(api.listConversations).mockResolvedValue({
+      conversations: [
+        {
+          id: "conv_source",
+          title: "Sourced chat",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:02:00",
+          message_count: 2,
+          pinned: false,
+        },
+        {
+          id: "conv_empty",
+          title: "No source chat",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:01:00",
+          message_count: 2,
+          pinned: false,
+        },
+      ],
+    });
+    vi.mocked(api.getConversationMessages).mockImplementation(async (id) => ({
+      messages: [{
+        id: `msg_${id}`,
+        conversation_id: id,
+        role: "assistant",
+        content: `Loaded ${id}`,
+        created_at: "2026-05-23T10:01:00",
+      }],
+      used_memories: id === "conv_source"
+        ? [{ memory_id: "mem_source", title: "Reloaded retrieval source", score: 0.93 }]
+        : [],
+    }));
+    render(<App />);
+
+    expect(await screen.findByText("Reloaded retrieval source")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "No source chat" }));
+    await screen.findByText("Loaded conv_empty");
+    expect(screen.queryByText("Reloaded retrieval source")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sourced chat" }));
+    expect(await screen.findByText("Reloaded retrieval source")).toBeInTheDocument();
   });
 
   it("updates an already open Review page when a chat response creates a suggestion", async () => {
@@ -942,6 +1092,7 @@ describe("LuminaMind MVP frontend", () => {
         content: `Message from ${id}`,
         created_at: "2026-05-23T10:01:00",
       }],
+      used_memories: [],
     }));
     render(<App />);
 
@@ -983,6 +1134,7 @@ describe("LuminaMind MVP frontend", () => {
         content: `Loaded ${id}`,
         created_at: "2026-05-23T10:01:00",
       }],
+      used_memories: [],
     }));
     render(<App />);
 

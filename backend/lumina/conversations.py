@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .db import connect
-from .models import ChatMessage, ConversationSummary
+from .models import ChatMessage, ConversationSummary, UsedMemory
 
 
 def ensure_conversation(vault_root: Path, conversation_id: str | None, title: str = "") -> str:
@@ -16,7 +16,12 @@ def ensure_conversation(vault_root: Path, conversation_id: str | None, title: st
             """
             INSERT INTO conversations (id, title, created_at, updated_at)
             VALUES (?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
+            ON CONFLICT(id) DO UPDATE SET
+                title = CASE
+                    WHEN conversations.title = 'New conversation' THEN excluded.title
+                    ELSE conversations.title
+                END,
+                updated_at = excluded.updated_at
             """,
             (conv_id, title or "Untitled", now, now),
         )
@@ -195,3 +200,35 @@ def load_messages(vault_root: Path, conversation_id: str | None, limit: int | No
 
 def load_chat_messages(vault_root: Path, conversation_id: str) -> list[ChatMessage]:
     return [ChatMessage(**message) for message in load_messages(vault_root, conversation_id)]
+
+
+def save_used_memories(vault_root: Path, conversation_id: str, used_memories: list[UsedMemory]) -> None:
+    with connect(vault_root) as conn:
+        conn.execute("DELETE FROM conversation_used_memories WHERE conversation_id = ?", (conversation_id,))
+        conn.executemany(
+            """
+            INSERT INTO conversation_used_memories (conversation_id, position, memory_id, title, score)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (conversation_id, position, memory.memory_id, memory.title, memory.score)
+                for position, memory in enumerate(used_memories)
+            ],
+        )
+
+
+def load_used_memories(vault_root: Path, conversation_id: str) -> list[UsedMemory]:
+    with connect(vault_root) as conn:
+        rows = conn.execute(
+            """
+            SELECT memory_id, title, score
+            FROM conversation_used_memories
+            WHERE conversation_id = ?
+            ORDER BY position ASC
+            """,
+            (conversation_id,),
+        ).fetchall()
+    return [
+        UsedMemory(memory_id=row["memory_id"], title=row["title"], score=row["score"])
+        for row in rows
+    ]

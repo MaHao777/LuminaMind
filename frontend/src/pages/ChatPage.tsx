@@ -5,9 +5,11 @@ import { MarkdownContent } from "../components/MarkdownContent";
 import {
   createConversation,
   deleteConversation,
+  generateSuggestions,
   getConversationMessages,
   listConversations,
   sendChat,
+  updateIndex,
   updateConversation,
   type ConversationSummary,
   type UsedMemory,
@@ -30,6 +32,12 @@ type PendingChat = {
   vaultPath?: string;
   messages: Message[];
   usedMemories: UsedMemory[];
+};
+
+type PostprocessTask = {
+  conversationId: string;
+  refreshIndex: boolean;
+  vaultPath?: string;
 };
 
 type Props = {
@@ -73,6 +81,8 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
   const [pendingChat, setPendingChat] = useState<PendingChat | null>(null);
   const [error, setError] = useState("");
   const [chatError, setChatError] = useState("");
+  const [postprocessError, setPostprocessError] = useState("");
+  const [retryPostprocess, setRetryPostprocess] = useState<PostprocessTask | null>(null);
   const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -85,9 +95,13 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
   const searchEditedRef = useRef(false);
   const initializedVaultRef = useRef(false);
   const displayRevisionRef = useRef(0);
+  const postprocessQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const refreshedIndexVaultRef = useRef<string | null>(null);
+  const onSuggestionsChangedRef = useRef(onSuggestionsChanged);
   vaultPathRef.current = vaultPath;
   conversationIdRef.current = conversationId;
   conversationQueryRef.current = conversationQuery;
+  onSuggestionsChangedRef.current = onSuggestionsChanged;
   const loading = Boolean(
     pendingChat
     && pendingChat.conversationId === conversationId
@@ -107,6 +121,33 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
 
   function isPendingRequest(requestId: number) {
     return pendingChatRef.current?.requestId === requestId;
+  }
+
+  function enqueuePostprocess(task: PostprocessTask) {
+    setPostprocessError("");
+    setRetryPostprocess(null);
+    postprocessQueueRef.current = postprocessQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const belongsToCurrentVault = () =>
+          task.vaultPath === undefined || task.vaultPath === vaultPathRef.current;
+        if (!belongsToCurrentVault()) return;
+        const vaultKey = task.vaultPath ?? vaultPathRef.current ?? "__default__";
+        if (task.refreshIndex && refreshedIndexVaultRef.current !== vaultKey) {
+          await updateIndex();
+          if (!belongsToCurrentVault()) return;
+          refreshedIndexVaultRef.current = vaultKey;
+        }
+        await generateSuggestions(task.conversationId);
+        if (!belongsToCurrentVault()) return;
+        await onSuggestionsChangedRef.current?.();
+      })
+      .catch((err: unknown) => {
+        if (task.vaultPath !== undefined && task.vaultPath !== vaultPathRef.current) return;
+        const detail = err instanceof Error ? err.message : "Unknown error";
+        setPostprocessError(`Memory update failed: ${detail}`);
+        setRetryPostprocess(task);
+      });
   }
 
   useEffect(() => {
@@ -174,6 +215,7 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
       const response = await getConversationMessages(nextId);
       if (revision !== displayRevisionRef.current || activeVaultPath !== vaultPathRef.current) return;
       setMessages(toMessages(response.messages));
+      setUsedMemories(response.used_memories);
     } catch (err) {
       if (revision !== displayRevisionRef.current || activeVaultPath !== vaultPathRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load conversation");
@@ -282,6 +324,9 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     updatePendingChat(null);
     setError("");
     setChatError("");
+    setPostprocessError("");
+    setRetryPostprocess(null);
+    refreshedIndexVaultRef.current = null;
     setConversationMenu(null);
     if (!vaultPath) return;
 
@@ -299,6 +344,7 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
         if (revision !== displayRevisionRef.current || vaultPath !== vaultPathRef.current) return;
         selectConversation(recent.id);
         setMessages(toMessages(messageResponse.messages));
+        setUsedMemories(messageResponse.used_memories);
       })
       .catch((err: Error) => {
         if (revision === displayRevisionRef.current && vaultPath === vaultPathRef.current) setError(err.message);
@@ -345,7 +391,13 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
         setMessages([...submittedMessages, { role: "assistant", content: response.answer }]);
         setUsedMemories(response.used_memories);
       }
-      void onSuggestionsChanged?.();
+      if (response.conversation_id) {
+        enqueuePostprocess({
+          conversationId: response.conversation_id,
+          refreshIndex: Boolean(response.memory_index_refresh_required),
+          vaultPath: activeVaultPath ?? vaultPathRef.current,
+        });
+      }
       try {
         await refreshConversations();
       } catch (err) {
@@ -493,6 +545,16 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
         </div>
 
         {error ? <div className="banner error">{error}</div> : null}
+        {postprocessError ? (
+          <div className="banner error postprocess-banner">
+            <span>{postprocessError}</span>
+            {retryPostprocess ? (
+              <button type="button" className="icon-text-button" aria-label="Retry memory update" onClick={() => enqueuePostprocess(retryPostprocess)}>
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {pendingSuggestionCount > 0 ? (
           <div className="banner success">
             {pendingSuggestionCount} memory suggestion{pendingSuggestionCount === 1 ? "" : "s"} ready for review.

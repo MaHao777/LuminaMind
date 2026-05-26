@@ -12,6 +12,7 @@ from lumina.config import AppSettings
 from lumina.conversations import add_message
 from lumina.db import db_path
 from lumina.indexer import index_status, load_vectors, rebuild_index as real_rebuild_index
+from lumina.models import RetrievalResult
 
 
 def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path, monkeypatch) -> None:
@@ -133,6 +134,41 @@ def test_api_updates_and_deletes_memory_files(tmp_path: Path) -> None:
     assert missing.status_code == 404
 
 
+def test_memory_pin_persists_to_markdown_and_sorts_pinned_notes_first(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "pinned-memory-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    first = client.post(
+        "/api/memories",
+        json={"title": "Alpha memory", "type": "project", "content": "First", "importance": 3},
+    ).json()
+    second = client.post(
+        "/api/memories",
+        json={"title": "Zulu memory", "type": "project", "content": "Second", "importance": 3},
+    ).json()
+    second_path = Path(second["path"])
+    second_raw = second_path.read_text(encoding="utf-8")
+    second_raw = second_raw.replace(f"updated: '{second['updated']}'", "updated: '2024-01-01'")
+    second_raw = second_raw.replace(f"updated: {second['updated']}", "updated: 2024-01-01")
+    assert "2024-01-01" in second_raw
+    second_path.write_text(second_raw, encoding="utf-8")
+    client.post("/api/vault/scan")
+
+    pinned = client.patch(f"/api/memories/{second['id']}", json={"pinned": True})
+
+    assert pinned.status_code == 200
+    assert pinned.json()["pinned"] is True
+    assert pinned.json()["updated"] == "2024-01-01"
+    assert "pinned: true" in Path(second["path"]).read_text(encoding="utf-8")
+    assert client.get("/api/memories").json()["memories"][0]["id"] == second["id"]
+
+    client.post("/api/vault/scan")
+    rescanned = client.get("/api/memories").json()["memories"]
+    assert rescanned[0]["id"] == second["id"]
+    assert rescanned[0]["pinned"] is True
+    assert client.patch(f"/api/memories/{first['id']}-missing", json={"pinned": True}).status_code == 404
+
+
 def test_chat_persists_messages_lists_conversations_and_injects_history(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "chat-vault"
@@ -238,15 +274,25 @@ def test_chat_rejects_failed_llm_request_without_persisting_messages(tmp_path: P
     assert client.get("/api/conversations").json()["conversations"] == []
 
 
-def test_chat_auto_generates_pending_memory_suggestions_after_response(tmp_path: Path, monkeypatch) -> None:
+def test_chat_returns_before_memory_suggestion_generation_and_then_allows_explicit_generation(
+    tmp_path: Path, monkeypatch
+) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "auto-suggestion-vault"
     client.post("/api/vault/select", json={"path": str(vault_path)})
+    generation_calls: list[str | None] = []
 
     def fake_generate_answer(settings, user_message, memories, conversation_history):
         return "LuminaMind 第一版应围绕 Markdown 记忆和混合检索闭环实现。"
 
     monkeypatch.setattr(main, "generate_answer", fake_generate_answer)
+    real_generate_suggestions = main.generate_suggestions
+
+    def tracked_generate_suggestions(vault_root, conversation_id=None, settings=None):
+        generation_calls.append(conversation_id)
+        return real_generate_suggestions(vault_root, conversation_id, settings)
+
+    monkeypatch.setattr(main, "generate_suggestions", tracked_generate_suggestions)
 
     response = client.post(
         "/api/chat",
@@ -255,16 +301,24 @@ def test_chat_auto_generates_pending_memory_suggestions_after_response(tmp_path:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["memory_suggestions"]
-    suggestion = payload["memory_suggestions"][0]
+    assert payload["memory_suggestions"] == []
+    assert payload["memory_index_refresh_required"] is True
+    assert generation_calls == []
+
+    generated = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": payload["conversation_id"]},
+    )
+    suggestion = generated.json()["suggestions"][0]
     assert suggestion["conversation_id"] == payload["conversation_id"]
     assert suggestion["status"] == "pending"
+    assert generation_calls == [payload["conversation_id"]]
 
     listed = client.get("/api/memory-suggestions").json()["suggestions"]
     assert any(item["id"] == suggestion["id"] for item in listed)
 
 
-def test_chat_auto_review_mode_accepts_new_suggestions_immediately(tmp_path: Path, monkeypatch) -> None:
+def test_explicit_post_chat_generation_applies_auto_review_mode(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "automatic-review-vault"
     client.post("/api/vault/select", json={"path": str(vault_path)})
@@ -274,7 +328,11 @@ def test_chat_auto_review_mode_accepts_new_suggestions_immediately(tmp_path: Pat
     response = client.post("/api/chat", json={"message": "请记住我的自动审查偏好。"})
 
     assert response.status_code == 200
-    suggestion = response.json()["memory_suggestions"][0]
+    generated = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": response.json()["conversation_id"]},
+    )
+    suggestion = generated.json()["suggestions"][0]
     assert suggestion["status"] == "accepted"
     memories = client.get("/api/memories").json()["memories"]
     assert any(item["title"] == suggestion["title"] for item in memories)
@@ -299,15 +357,23 @@ def test_auto_review_does_not_accept_an_existing_pending_duplicate(tmp_path: Pat
     monkeypatch.setattr(suggestions_module, "generate_memory_suggestion_drafts", lambda *args: [draft])
 
     first = client.post("/api/chat", json={"message": "第一次产生候选。"}).json()
+    first_suggestions = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": first["conversation_id"]},
+    ).json()["suggestions"]
     AppSettings(vault_path=str(vault_path), review_mode="auto").save(vault_path)
     second = client.post(
         "/api/chat",
         json={"conversation_id": first["conversation_id"], "message": "再次讨论相同内容。"},
     ).json()
+    second_suggestions = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": second["conversation_id"]},
+    ).json()["suggestions"]
 
-    assert first["memory_suggestions"][0]["status"] == "pending"
-    assert second["memory_suggestions"][0]["id"] == first["memory_suggestions"][0]["id"]
-    assert second["memory_suggestions"][0]["status"] == "pending"
+    assert first_suggestions[0]["status"] == "pending"
+    assert second_suggestions[0]["id"] == first_suggestions[0]["id"]
+    assert second_suggestions[0]["status"] == "pending"
     assert all(item["title"] != draft["title"] for item in client.get("/api/memories").json()["memories"])
 
 
@@ -319,14 +385,18 @@ def test_auto_review_restores_new_suggestion_to_pending_when_write_fails(tmp_pat
     monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
     monkeypatch.setattr(suggestions_module, "create_memory", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("write failed")))
 
-    failed = TestClient(app, raise_server_exceptions=False).post("/api/chat", json={"message": "保存这个决定。"})
+    chat = client.post("/api/chat", json={"message": "保存这个决定。"})
+    failed = TestClient(app, raise_server_exceptions=False).post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": chat.json()["conversation_id"]},
+    )
 
     assert failed.status_code == 500
     listed = client.get("/api/memory-suggestions").json()["suggestions"]
     assert listed[0]["status"] == "pending"
 
 
-def test_chat_rebuilds_missing_memory_index_before_retrieval(tmp_path: Path, monkeypatch) -> None:
+def test_chat_uses_available_keyword_context_and_defers_missing_index_rebuild(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "chat-index-vault"
     client.post("/api/vault/select", json={"path": str(vault_path)})
@@ -361,9 +431,15 @@ def test_chat_rebuilds_missing_memory_index_before_retrieval(tmp_path: Path, mon
     response = client.post("/api/chat", json={"message": "聊天时怎么注入 Embedding 记忆？"})
 
     assert response.status_code == 200
-    assert rebuild_calls == [vault_path]
-    assert index_status(vault_path)["indexed_chunks"] >= 1
+    assert response.json()["memory_index_refresh_required"] is True
+    assert rebuild_calls == []
+    assert index_status(vault_path)["indexed_chunks"] == 0
     assert captured_memories[0][0].title == "LuminaMind 索引测试"
+
+    updated = client.post("/api/index/update")
+
+    assert updated.status_code == 200
+    assert index_status(vault_path)["indexed_chunks"] >= 1
 
 
 def test_accepting_memory_suggestion_rebuilds_vector_index(tmp_path: Path, monkeypatch) -> None:
@@ -376,7 +452,11 @@ def test_accepting_memory_suggestion_rebuilds_vector_index(tmp_path: Path, monke
         "/api/chat",
         json={"message": "请记住：LuminaMind 的长期记忆需要由用户审查后写入 Markdown。"},
     )
-    suggestion_id = chat.json()["memory_suggestions"][0]["id"]
+    generated = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": chat.json()["conversation_id"]},
+    )
+    suggestion_id = generated.json()["suggestions"][0]["id"]
 
     rebuild_calls: list[Path] = []
     real_rebuild = real_rebuild_index
@@ -439,6 +519,97 @@ def test_create_conversation_allows_a_new_draft_after_the_previous_one_has_messa
     assert {item["id"] for item in conversations} == {first["id"], second["id"]}
 
 
+def test_chat_titles_a_default_draft_from_its_first_user_message_without_overwriting_custom_titles(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "draft-title-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    draft = client.post("/api/conversations", json={}).json()
+    first_message = "Summarize this conversation from the first message and keep the title concise."
+    sent = client.post("/api/chat", json={"conversation_id": draft["id"], "message": first_message})
+
+    assert sent.status_code == 200
+    listed = client.get("/api/conversations").json()["conversations"]
+    assert next(item for item in listed if item["id"] == draft["id"])["title"] == first_message[:40]
+
+    custom = client.post("/api/conversations", json={"title": "Pinned planning title"}).json()
+    client.post("/api/chat", json={"conversation_id": custom["id"], "message": "Do not replace my title."})
+    listed = client.get("/api/conversations").json()["conversations"]
+    assert next(item for item in listed if item["id"] == custom["id"])["title"] == "Pinned planning title"
+
+
+def test_selecting_vault_backfills_legacy_default_titles_from_the_first_user_message(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "legacy-title-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    first_message = "Recovered title from an already stored user message that is long enough to truncate."
+    with sqlite3.connect(db_path(vault_path)) as conn:
+        conn.execute(
+            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("conv_default_title", "New conversation", "2026-05-20T10:00:00", "2026-05-20T10:01:00"),
+        )
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("msg_default_title", "conv_default_title", "user", first_message, "2026-05-20T10:00:00"),
+        )
+
+    assert client.post("/api/vault/select", json={"path": str(vault_path)}).status_code == 200
+    listed = client.get("/api/conversations").json()["conversations"]
+    assert next(item for item in listed if item["id"] == "conv_default_title")["title"] == first_message[:40]
+
+
+def test_chat_persists_only_the_latest_used_memories_for_reloaded_conversations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "used-memory-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    retrieved = [[RetrievalResult(memory_id="mem_saved", title="Saved source", score=0.91, reason="", path="")], []]
+    monkeypatch.setattr(main, "retrieve_memories", lambda *args, **kwargs: retrieved.pop(0))
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    first = client.post("/api/chat", json={"message": "Use a source this time."}).json()
+    conversation_id = first["conversation_id"]
+    loaded = client.get(f"/api/conversations/{conversation_id}/messages")
+    assert loaded.json()["used_memories"] == [{"memory_id": "mem_saved", "title": "Saved source", "score": 0.91}]
+
+    assert client.post(
+        "/api/chat",
+        json={"conversation_id": conversation_id, "message": "Use no source this time."},
+    ).status_code == 200
+    loaded = client.get(f"/api/conversations/{conversation_id}/messages")
+    assert loaded.json()["used_memories"] == []
+
+
+def test_deleting_conversation_removes_persisted_used_memories(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "delete-used-memory-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    monkeypatch.setattr(
+        main,
+        "retrieve_memories",
+        lambda *args, **kwargs: [
+            RetrievalResult(memory_id="mem_deleted", title="Deleted source", score=0.82, reason="", path="")
+        ],
+    )
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    conversation_id = client.post("/api/chat", json={"message": "Track the source."}).json()["conversation_id"]
+    assert client.delete(f"/api/conversations/{conversation_id}").status_code == 200
+    with sqlite3.connect(db_path(vault_path)) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM conversation_used_memories WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()[0]
+    assert count == 0
+
+
 def test_selecting_vault_prunes_legacy_duplicate_disposable_drafts(tmp_path: Path) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "legacy-empty-drafts-vault"
@@ -494,7 +665,11 @@ def test_delete_conversation_removes_messages_and_suggestions_but_keeps_accepted
     monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
     chat = client.post("/api/chat", json={"message": "请记住这个项目决定。"})
     conversation_id = chat.json()["conversation_id"]
-    suggestion = chat.json()["memory_suggestions"][0]
+    generated = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": conversation_id},
+    )
+    suggestion = generated.json()["suggestions"][0]
     accepted = client.post(f"/api/memory-suggestions/{suggestion['id']}/accept")
     assert accepted.status_code == 200
 

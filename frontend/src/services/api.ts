@@ -25,6 +25,7 @@ export type MemoryNote = {
   importance: number;
   confidence: number;
   status: string;
+  pinned: boolean;
   source: string;
   created: string;
   updated: string;
@@ -55,6 +56,7 @@ export type ChatResponse = {
   answer: string;
   used_memories: UsedMemory[];
   memory_suggestions: MemorySuggestion[];
+  memory_index_refresh_required?: boolean;
 };
 
 export type ConversationSummary = {
@@ -151,12 +153,23 @@ export function rebuildIndex() {
   return request<IndexSummary>("/api/index/rebuild", { method: "POST" });
 }
 
+export function updateIndex() {
+  return request<IndexSummary>("/api/index/update", { method: "POST" });
+}
+
 export function listMemories() {
   return request<{ memories: MemoryNote[] }>("/api/memories");
 }
 
 export function deleteMemory(id: string) {
   return request<{ deleted: boolean }>(`/api/memories/${id}`, { method: "DELETE" });
+}
+
+export function updateMemoryPin(id: string, pinned: boolean) {
+  return request<MemoryNote>(`/api/memories/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned }),
+  });
 }
 
 export function sendChat(message: string, conversationId?: string) {
@@ -191,7 +204,7 @@ export function updateConversation(id: string, pinned: boolean) {
 }
 
 export function getConversationMessages(conversationId: string) {
-  return request<{ messages: ChatMessage[] }>(`/api/conversations/${conversationId}/messages`);
+  return request<{ messages: ChatMessage[]; used_memories: UsedMemory[] }>(`/api/conversations/${conversationId}/messages`);
 }
 
 export function listSuggestions() {
