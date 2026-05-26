@@ -209,8 +209,12 @@ def api_retrieve(payload: RetrievalRequest) -> dict:
 
 
 @app.get("/api/conversations")
-def api_list_conversations() -> dict:
-    return {"conversations": [conversation.model_dump() for conversation in list_conversations(require_vault())]}
+def api_list_conversations(query: str = "") -> dict:
+    return {
+        "conversations": [
+            conversation.model_dump() for conversation in list_conversations(require_vault(), query=query)
+        ]
+    }
 
 
 @app.post("/api/conversations")

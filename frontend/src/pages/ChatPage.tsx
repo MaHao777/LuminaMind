@@ -1,4 +1,4 @@
-import { Pin, Plus, Send, Trash2 } from "lucide-react";
+import { Pin, Plus, Search, Send, Trash2, X } from "lucide-react";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
@@ -66,6 +66,7 @@ function toMessages(messages: Array<{ role: string; content: string }>): Message
 export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, onSuggestionsChanged }: Props) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationQuery, setConversationQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [usedMemories, setUsedMemories] = useState<UsedMemory[]>([]);
   const [input, setInput] = useState("");
@@ -77,12 +78,16 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
   const menuRef = useRef<HTMLDivElement>(null);
   const vaultPathRef = useRef(vaultPath);
   const conversationIdRef = useRef(conversationId);
+  const conversationQueryRef = useRef(conversationQuery);
   const pendingChatRef = useRef<PendingChat | null>(null);
   const requestIdRef = useRef(0);
+  const listRequestIdRef = useRef(0);
+  const searchEditedRef = useRef(false);
   const initializedVaultRef = useRef(false);
   const displayRevisionRef = useRef(0);
   vaultPathRef.current = vaultPath;
   conversationIdRef.current = conversationId;
+  conversationQueryRef.current = conversationQuery;
   const loading = Boolean(
     pendingChat
     && pendingChat.conversationId === conversationId
@@ -128,9 +133,25 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     };
   }, [conversationMenu]);
 
-  async function refreshConversations() {
-    const response = await listConversations();
-    setConversations(sortConversations(response.conversations));
+  async function refreshConversations(query = conversationQueryRef.current) {
+    const listRequestId = ++listRequestIdRef.current;
+    const activeVaultPath = vaultPathRef.current;
+    try {
+      const response = await listConversations(query);
+      if (
+        listRequestId !== listRequestIdRef.current
+        || activeVaultPath !== vaultPathRef.current
+        || query !== conversationQueryRef.current
+      ) return;
+      setConversations(sortConversations(response.conversations));
+    } catch (err) {
+      if (
+        listRequestId !== listRequestIdRef.current
+        || activeVaultPath !== vaultPathRef.current
+        || query !== conversationQueryRef.current
+      ) return;
+      throw err;
+    }
   }
 
   async function loadConversation(nextId: string) {
@@ -166,7 +187,14 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     try {
       const created = await createConversation();
       ++displayRevisionRef.current;
-      setConversations((current) => sortConversations([created, ...current.filter((item) => item.id !== created.id)]));
+      if (conversationQueryRef.current.trim()) {
+        searchEditedRef.current = false;
+        conversationQueryRef.current = "";
+        setConversationQuery("");
+        await refreshConversations("");
+      } else {
+        setConversations((current) => sortConversations([created, ...current.filter((item) => item.id !== created.id)]));
+      }
       selectConversation(created.id);
       setMessages([]);
       setUsedMemories([]);
@@ -242,8 +270,12 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     if (initialHydration && (pendingChatRef.current || messages.length > 0 || input.length > 0)) return;
 
     const revision = ++displayRevisionRef.current;
+    ++listRequestIdRef.current;
     selectConversation(undefined);
     setConversations([]);
+    searchEditedRef.current = false;
+    conversationQueryRef.current = "";
+    setConversationQuery("");
     setMessages([]);
     setUsedMemories([]);
     setInput("");
@@ -255,7 +287,11 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
 
     listConversations()
       .then(async (response) => {
-        if (revision !== displayRevisionRef.current || vaultPath !== vaultPathRef.current) return;
+        if (
+          revision !== displayRevisionRef.current
+          || vaultPath !== vaultPathRef.current
+          || conversationQueryRef.current !== ""
+        ) return;
         setConversations(sortConversations(response.conversations));
         const recent = mostRecentlyUpdatedConversation(response.conversations);
         if (!recent) return;
@@ -268,6 +304,14 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
         if (revision === displayRevisionRef.current && vaultPath === vaultPathRef.current) setError(err.message);
       });
   }, [vaultPath]);
+
+  useEffect(() => {
+    if (!searchEditedRef.current || !vaultPath) return undefined;
+    const timeout = window.setTimeout(() => {
+      refreshConversations(conversationQuery).catch((err: Error) => setError(err.message));
+    }, 180);
+    return () => window.clearTimeout(timeout);
+  }, [conversationQuery, vaultPath]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -326,8 +370,37 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
             <Plus size={16} aria-hidden />
           </button>
         </div>
+        <label className="search-field">
+          <Search size={15} aria-hidden />
+          <input
+            aria-label="Search conversations"
+            placeholder="Search chats"
+            value={conversationQuery}
+            onChange={(event) => {
+              searchEditedRef.current = true;
+              setError("");
+              setConversationQuery(event.target.value);
+            }}
+          />
+          {conversationQuery ? (
+            <button
+              type="button"
+              className="clear-search-button"
+              aria-label="Clear conversation search"
+              onClick={() => {
+                searchEditedRef.current = true;
+                setError("");
+                setConversationQuery("");
+              }}
+            >
+              <X size={14} aria-hidden />
+            </button>
+          ) : null}
+        </label>
         {conversations.length === 0 ? (
-          <div className="empty-state">No saved conversations.</div>
+          <div className="empty-state">
+            {conversationQuery.trim() ? "No chats match your search." : "No saved conversations."}
+          </div>
         ) : (
           <div className="conversation-stack">
             {conversations.map((conversation) => (

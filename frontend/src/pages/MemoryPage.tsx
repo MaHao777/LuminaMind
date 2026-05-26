@@ -1,5 +1,5 @@
-import { RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { RefreshCw, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { MarkdownContent } from "../components/MarkdownContent";
 
 import { deleteMemory, listMemories, rebuildIndex, scanVault, type MemoryNote } from "../services/api";
@@ -7,6 +7,7 @@ import { deleteMemory, listMemories, rebuildIndex, scanVault, type MemoryNote } 
 export function MemoryPage() {
   const [memories, setMemories] = useState<MemoryNote[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -25,7 +26,29 @@ export function MemoryPage() {
     void load();
   }, []);
 
-  const selected = memories.find((memory) => memory.id === selectedId) ?? memories[0];
+  const filteredMemories = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return memories;
+    return memories.filter((memory) =>
+      [
+        memory.title,
+        memory.type,
+        memory.path,
+        memory.content,
+        memory.tags.join(" "),
+      ].join("\n").toLocaleLowerCase().includes(normalizedQuery),
+    );
+  }, [memories, query]);
+
+  useEffect(() => {
+    setSelectedId((current) =>
+      filteredMemories.some((memory) => memory.id === current)
+        ? current
+        : filteredMemories[0]?.id || "",
+    );
+  }, [filteredMemories]);
+
+  const selected = filteredMemories.find((memory) => memory.id === selectedId) ?? filteredMemories[0];
 
   async function removeSelectedMemory() {
     if (!selected || deleting) return;
@@ -63,12 +86,23 @@ export function MemoryPage() {
             Reindex
           </button>
         </div>
+        <label className="search-field">
+          <Search size={15} aria-hidden />
+          <input
+            aria-label="Search memories"
+            placeholder="Search memories"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
 
-        {memories.length === 0 ? (
-          <div className="empty-state">No Markdown memories loaded.</div>
+        {filteredMemories.length === 0 ? (
+          <div className="empty-state">
+            {query.trim() && memories.length > 0 ? "No memories match your search." : "No Markdown memories loaded."}
+          </div>
         ) : (
           <div className="memory-list">
-            {memories.map((memory) => (
+            {filteredMemories.map((memory) => (
               <button
                 key={memory.id}
                 className={selected?.id === memory.id ? "memory-row active" : "memory-row"}

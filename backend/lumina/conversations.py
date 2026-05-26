@@ -63,10 +63,29 @@ def delete_conversation(vault_root: Path, conversation_id: str) -> bool:
     return True
 
 
-def list_conversations(vault_root: Path) -> list[ConversationSummary]:
+def _escape_like_term(query: str) -> str:
+    return query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_conversations(vault_root: Path, query: str = "") -> list[ConversationSummary]:
+    normalized_query = query.strip()
+    where_clause = ""
+    parameters: tuple[str, ...] = ()
+    if normalized_query:
+        pattern = f"%{_escape_like_term(normalized_query)}%"
+        where_clause = """
+            WHERE conversations.title LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR EXISTS (
+                    SELECT 1 FROM messages AS matching_messages
+                    WHERE matching_messages.conversation_id = conversations.id
+                      AND matching_messages.content LIKE ? ESCAPE '\\' COLLATE NOCASE
+               )
+        """
+        parameters = (pattern, pattern)
+
     with connect(vault_root) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 conversations.id,
                 conversations.title,
@@ -76,9 +95,11 @@ def list_conversations(vault_root: Path) -> list[ConversationSummary]:
                 COUNT(messages.id) AS message_count
             FROM conversations
             LEFT JOIN messages ON messages.conversation_id = conversations.id
+            {where_clause}
             GROUP BY conversations.id, conversations.pinned
             ORDER BY conversations.pinned DESC, conversations.updated_at DESC, conversations.created_at DESC
-            """
+            """,
+            parameters,
         ).fetchall()
     return [_row_to_conversation(row) for row in rows]
 

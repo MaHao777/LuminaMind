@@ -1,4 +1,4 @@
-import { BookOpenText, CheckCheck, MessageSquareText, Search, Settings, Sparkles } from "lucide-react";
+import { BookOpenText, CheckCheck, MessageSquareText, PanelLeftClose, PanelLeftOpen, Search, Settings, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ChatPage } from "./pages/ChatPage";
@@ -6,6 +6,7 @@ import { MemoryPage } from "./pages/MemoryPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { getSettings, listSuggestions, type AppSettings, type MemorySuggestion } from "./services/api";
+import { loadSidebarCollapsed, loadTheme, saveSidebarCollapsed, saveTheme, type ThemeId } from "./services/uiPreferences";
 
 type Page = "chat" | "memory" | "review" | "settings";
 
@@ -21,6 +22,8 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
   const [error, setError] = useState<string>("");
+  const [theme, setTheme] = useState<ThemeId>(() => loadTheme());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => loadSidebarCollapsed());
   const pendingSuggestionCount = suggestions.filter((suggestion) => suggestion.status === "pending").length;
 
   useEffect(() => {
@@ -46,15 +49,38 @@ export default function App() {
     void refreshPendingSuggestions();
   }, [refreshPendingSuggestions]);
 
+  function changeTheme(nextTheme: ThemeId) {
+    setTheme(nextTheme);
+    saveTheme(nextTheme);
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      saveSidebarCollapsed(next);
+      return next;
+    });
+  }
+
   return (
-    <div className="app-shell">
+    <div className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"} data-theme={theme}>
       <aside className="sidebar">
         <div className="brand">
-          <Sparkles size={22} aria-hidden />
-          <div>
-            <strong>LuminaMind</strong>
-            <span>Local memory agent</span>
+          <div className="brand-identity">
+            <Sparkles size={22} aria-hidden />
+            <div className="brand-copy">
+              <strong>LuminaMind</strong>
+              <span>Local memory agent</span>
+            </div>
           </div>
+          <button
+            type="button"
+            className="icon-button sidebar-toggle"
+            aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+            onClick={toggleSidebar}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={17} aria-hidden /> : <PanelLeftClose size={17} aria-hidden />}
+          </button>
         </div>
 
         <nav className="nav-list" aria-label="Main">
@@ -71,7 +97,7 @@ export default function App() {
                 onClick={() => setPage(item.id)}
               >
                 <Icon size={18} aria-hidden />
-                {item.label}
+                <span className="nav-label">{item.label}</span>
                 {item.id === "review" && pendingSuggestionCount > 0 ? (
                   <span className="nav-badge" aria-hidden="true">{pendingSuggestionCount}</span>
                 ) : null}
@@ -80,7 +106,7 @@ export default function App() {
           })}
         </nav>
 
-        <div className="sidebar-status">
+        <div className="sidebar-status" title={settings?.vault_path || "No vault selected"}>
           <Search size={16} aria-hidden />
           <span>{settings?.vault_path || "No vault selected"}</span>
         </div>
@@ -98,7 +124,14 @@ export default function App() {
         {page === "review" ? (
           <ReviewPage suggestions={suggestions} onSuggestionsChanged={refreshPendingSuggestions} />
         ) : null}
-        {page === "settings" ? <SettingsPage settings={settings} onSettingsChange={setSettings} /> : null}
+        {page === "settings" ? (
+          <SettingsPage
+            settings={settings}
+            theme={theme}
+            onSettingsChange={setSettings}
+            onThemeChange={changeTheme}
+          />
+        ) : null}
       </main>
     </div>
   );

@@ -175,6 +175,40 @@ def test_chat_persists_messages_lists_conversations_and_injects_history(tmp_path
     ]
 
 
+def test_conversation_search_matches_titles_messages_and_literal_wildcards(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "search-chat-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(main, "generate_suggestions", lambda *args, **kwargs: [])
+
+    roadmap = client.post("/api/conversations", json={"title": "Roadmap planning"}).json()
+    client.post(
+        "/api/chat",
+        json={"conversation_id": roadmap["id"], "message": "hidden needle with 100% coverage"},
+    )
+    budget = client.post("/api/conversations", json={"title": "Budget log"}).json()
+    client.post(
+        "/api/chat",
+        json={"conversation_id": budget["id"], "message": "1000 records and no match token"},
+    )
+
+    assert [item["id"] for item in client.get("/api/conversations", params={"query": "Roadmap"}).json()["conversations"]] == [
+        roadmap["id"]
+    ]
+    assert [item["id"] for item in client.get("/api/conversations", params={"query": "needle"}).json()["conversations"]] == [
+        roadmap["id"]
+    ]
+    assert [item["id"] for item in client.get("/api/conversations", params={"query": "100%"}).json()["conversations"]] == [
+        roadmap["id"]
+    ]
+    assert client.get("/api/conversations", params={"query": "missing"}).json()["conversations"] == []
+    assert {item["id"] for item in client.get("/api/conversations", params={"query": "   "}).json()["conversations"]} == {
+        roadmap["id"],
+        budget["id"],
+    }
+
+
 def test_chat_rejects_missing_llm_credentials_without_persisting_messages(tmp_path: Path) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "missing-credentials-vault"

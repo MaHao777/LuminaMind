@@ -869,3 +869,434 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+/* Application shell preferences and split-view pages. */
+.app-shell {
+  --ui-text: #1d2329;
+  --ui-muted: #66737f;
+  --ui-app: #eef1f4;
+  --ui-sidebar: #f8fafb;
+  --ui-panel: #fff;
+  --ui-input: #fff;
+  --ui-border: #d1d9e0;
+  --ui-border-soft: #d7dde3;
+  --ui-primary: #202f3f;
+  --ui-primary-text: #fff;
+  --ui-subtle: #f8fafc;
+  --ui-hover: #e6edf2;
+  --ui-selected: #edf4fa;
+  --ui-selected-border: #6b8fb2;
+  --ui-code: #edf2f6;
+  --ui-link: #376c94;
+  --ui-danger-bg: #fff2f0;
+  --ui-danger-border: #e8b4b0;
+  --ui-danger-text: #8a2f26;
+  --ui-success-bg: #edf8f1;
+  --ui-success-border: #a9d4bc;
+  --ui-success-text: #245d39;
+  --ui-badge: #d43c3c;
+  color: var(--ui-text);
+  background: var(--ui-app);
+}
+
+.app-shell[data-theme="dark"] {
+  --ui-text: #e6e9ed;
+  --ui-muted: #9ca8b3;
+  --ui-app: #14181c;
+  --ui-sidebar: #1b2025;
+  --ui-panel: #20262c;
+  --ui-input: #171c21;
+  --ui-border: #37414a;
+  --ui-border-soft: #3d4852;
+  --ui-primary: #dbe4ec;
+  --ui-primary-text: #182027;
+  --ui-subtle: #252d34;
+  --ui-hover: #2b353e;
+  --ui-selected: #273848;
+  --ui-selected-border: #719bc1;
+  --ui-code: #161c22;
+  --ui-link: #8fbce4;
+  --ui-danger-bg: #382524;
+  --ui-danger-border: #73403d;
+  --ui-danger-text: #ffb8b0;
+  --ui-success-bg: #21342a;
+  --ui-success-border: #356148;
+  --ui-success-text: #a8e0ba;
+  --ui-badge: #da5650;
+}
+
+.app-shell[data-theme="warm"] {
+  --ui-text: #352f27;
+  --ui-muted: #766b5c;
+  --ui-app: #f5f0e7;
+  --ui-sidebar: #eee6d8;
+  --ui-panel: #fbf7ee;
+  --ui-input: #fffaf1;
+  --ui-border: #d9cdb9;
+  --ui-border-soft: #ddd1bf;
+  --ui-primary: #5e4c38;
+  --ui-primary-text: #fffaf0;
+  --ui-subtle: #f3ecdf;
+  --ui-hover: #e9dfce;
+  --ui-selected: #eee2cd;
+  --ui-selected-border: #9e7d54;
+  --ui-code: #f0e7d8;
+  --ui-link: #80613b;
+  --ui-danger-bg: #faede7;
+  --ui-danger-border: #dfb9a8;
+  --ui-danger-text: #873f31;
+  --ui-success-bg: #ecf1df;
+  --ui-success-border: #bccb99;
+  --ui-success-text: #4f6031;
+  --ui-badge: #b65340;
+}
+
+.app-shell .sidebar {
+  border-color: var(--ui-border);
+  background: var(--ui-sidebar);
+}
+
+.app-shell .panel,
+.app-shell .conversation-menu {
+  border-color: var(--ui-border);
+  background: var(--ui-panel);
+}
+
+.app-shell input,
+.app-shell select {
+  border-color: var(--ui-border);
+  background: var(--ui-input);
+  color: var(--ui-text);
+}
+
+.app-shell button {
+  border-color: var(--ui-primary);
+  background: var(--ui-primary);
+  color: var(--ui-primary-text);
+}
+
+.app-shell button.secondary,
+.app-shell .icon-text-button,
+.app-shell .icon-button,
+.app-shell .filter-button,
+.app-shell .settings-category {
+  border-color: var(--ui-border);
+  background: var(--ui-subtle);
+  color: var(--ui-text);
+}
+
+.app-shell .nav-item {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-text);
+}
+
+.app-shell .nav-item.active,
+.app-shell .nav-item:hover,
+.app-shell .filter-button.active,
+.app-shell .filter-button:hover,
+.app-shell .settings-category.active,
+.app-shell .settings-category:hover {
+  border-color: var(--ui-border);
+  background: var(--ui-hover);
+}
+
+.app-shell .brand span,
+.app-shell .sidebar-status,
+.app-shell .conversation-row span,
+.app-shell .memory-row span,
+.app-shell .source-row span,
+.app-shell .memory-meta span,
+.app-shell .suggestion-reason,
+.app-shell .suggestion-row span,
+.app-shell .settings-category span,
+.app-shell .setting-help,
+.app-shell .empty-state {
+  color: var(--ui-muted);
+}
+
+.app-shell .conversation-row,
+.app-shell .memory-row,
+.app-shell .source-row,
+.app-shell .suggestion-row,
+.app-shell .message {
+  border-color: var(--ui-border-soft);
+  background: var(--ui-subtle);
+  color: var(--ui-text);
+}
+
+.app-shell .conversation-row.active,
+.app-shell .memory-row.active,
+.app-shell .suggestion-row.active,
+.app-shell .message.user {
+  border-color: var(--ui-selected-border);
+  background: var(--ui-selected);
+}
+
+.app-shell .markdown-content,
+.app-shell .message-content,
+.app-shell .markdown-content h1,
+.app-shell .markdown-content h2,
+.app-shell .markdown-content h3 {
+  color: var(--ui-text);
+}
+
+.app-shell .message-content a,
+.app-shell .markdown-content a {
+  color: var(--ui-link);
+}
+
+.app-shell .message-content code,
+.app-shell .message-content pre,
+.app-shell .markdown-content code,
+.app-shell .markdown-content pre,
+.app-shell .suggestion-content code,
+.app-shell .suggestion-reason code,
+.app-shell .suggestion-content pre,
+.app-shell .suggestion-reason pre {
+  background: var(--ui-code);
+}
+
+.app-shell .message-content th,
+.app-shell .markdown-content th {
+  background: var(--ui-hover);
+}
+
+.app-shell .message-content th,
+.app-shell .message-content td,
+.app-shell .markdown-content th,
+.app-shell .markdown-content td,
+.app-shell .tag-row span,
+.app-shell .status-pill {
+  border-color: var(--ui-border);
+}
+
+.app-shell .tag-row span,
+.app-shell .status-pill {
+  background: var(--ui-subtle);
+  color: var(--ui-text);
+}
+
+.app-shell .nav-badge {
+  background: var(--ui-badge);
+}
+
+.app-shell .danger-button,
+.app-shell .banner.error,
+.app-shell .message-error {
+  border-color: var(--ui-danger-border);
+  background: var(--ui-danger-bg);
+  color: var(--ui-danger-text);
+}
+
+.app-shell .banner.success {
+  border-color: var(--ui-success-border);
+  background: var(--ui-success-bg);
+  color: var(--ui-success-text);
+}
+
+.brand-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sidebar-toggle {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 68px 1fr;
+}
+
+.sidebar-collapsed .sidebar {
+  gap: 18px;
+  padding: 16px 10px;
+}
+
+.sidebar-collapsed .brand {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.sidebar-collapsed .brand-copy,
+.sidebar-collapsed .nav-label,
+.sidebar-collapsed .sidebar-status span {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
+.sidebar-collapsed .nav-item {
+  position: relative;
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar-collapsed .nav-badge {
+  position: absolute;
+  top: -4px;
+  right: -2px;
+  min-width: 17px;
+  padding: 0 5px;
+  line-height: 17px;
+}
+
+.sidebar-collapsed .sidebar-status {
+  justify-content: center;
+}
+
+.search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-field > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--ui-muted);
+}
+
+.search-field input {
+  padding-left: 32px;
+  padding-right: 34px;
+}
+
+.clear-search-button {
+  position: absolute;
+  right: 5px;
+  min-height: 28px;
+  width: 28px;
+  padding: 0;
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--ui-muted) !important;
+}
+
+.conversation-list {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.review-grid,
+.settings-grid {
+  grid-template-columns: 320px minmax(400px, 1fr);
+}
+
+.suggestion-browser,
+.settings-browser {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.suggestion-list,
+.settings-category-list {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.suggestion-row,
+.settings-category {
+  display: grid;
+  justify-content: stretch;
+  width: 100%;
+  min-height: 62px;
+  padding: 10px;
+  text-align: left;
+}
+
+.suggestion-row strong,
+.suggestion-row span,
+.settings-category strong,
+.settings-category span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-row span,
+.settings-category span {
+  font-size: 12px;
+}
+
+.suggestion-detail,
+.settings-detail {
+  min-height: 0;
+  overflow: auto;
+}
+
+.suggestion-detail h2 {
+  margin: 10px 0;
+}
+
+.suggestion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+
+.suggestion-detail .card-actions {
+  margin-top: 18px;
+}
+
+.settings-category-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.settings-detail {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.settings-footer {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 16px;
+}
+
+.setting-help {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 62px 1fr;
+  }
+
+  .review-grid,
+  .settings-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, auto) minmax(320px, 1fr);
+  }
+}

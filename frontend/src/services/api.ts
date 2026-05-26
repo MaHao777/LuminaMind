@@ -166,8 +166,10 @@ export function sendChat(message: string, conversationId?: string) {
   });
 }
 
-export function listConversations() {
-  return request<{ conversations: ConversationSummary[] }>("/api/conversations");
+export function listConversations(query = "") {
+  const trimmedQuery = query.trim();
+  const search = trimmedQuery ? `?query=${encodeURIComponent(trimmedQuery)}` : "";
+  return request<{ conversations: ConversationSummary[] }>(`/api/conversations${search}`);
 }
 
 export function createConversation(title = "New conversation") {

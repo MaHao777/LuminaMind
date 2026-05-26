@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sendChat } from "../services/api";
+import { listConversations, sendChat } from "../services/api";
 
 describe("API error messages", () => {
   afterEach(() => {
@@ -30,5 +30,19 @@ describe("API error messages", () => {
 
     await expect(sendChat("first attempt")).rejects.toThrow("Service unavailable");
     await expect(sendChat("second attempt")).rejects.toThrow("Network offline");
+  });
+
+  it("encodes keyword searches when requesting conversations", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ conversations: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await listConversations("100% plan");
+
+    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:8000/api/conversations?query=100%25%20plan");
   });
 });

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
@@ -133,6 +133,7 @@ vi.mock("../services/api", () => ({
 describe("LuminaMind MVP frontend", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     Object.defineProperty(window, "luminaDesktop", { configurable: true, value: undefined });
   });
 
@@ -142,11 +143,13 @@ describe("LuminaMind MVP frontend", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(await screen.findByDisplayValue("D:/memory")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
     fireEvent.change(screen.getByLabelText("LLM Provider"), { target: { value: "ollama" } });
     fireEvent.change(screen.getByLabelText("Chat context window tokens (blank for automatic)"), {
       target: { value: "65536" },
     });
     fireEvent.change(screen.getByLabelText("Max response tokens"), { target: { value: "4096" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
     fireEvent.change(screen.getByLabelText("Review behavior"), { target: { value: "auto" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
@@ -160,6 +163,25 @@ describe("LuminaMind MVP frontend", () => {
         }),
       ),
     );
+  });
+
+  it("applies and persists appearance preferences from settings and the app shell", async () => {
+    window.localStorage.setItem("luminamind.ui.theme", "warm");
+    window.localStorage.setItem("luminamind.ui.sidebarCollapsed", "true");
+    const { container } = render(<App />);
+
+    const shell = container.querySelector(".app-shell");
+    expect(shell).toHaveAttribute("data-theme", "warm");
+    expect(shell).toHaveClass("sidebar-collapsed");
+    fireEvent.click(screen.getByRole("button", { name: "Expand navigation" }));
+    expect(window.localStorage.getItem("luminamind.ui.sidebarCollapsed")).toBe("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+    fireEvent.change(screen.getByLabelText("Theme color"), { target: { value: "dark" } });
+
+    expect(shell).toHaveAttribute("data-theme", "dark");
+    expect(window.localStorage.getItem("luminamind.ui.theme")).toBe("dark");
   });
 
   it("selects a vault through the Electron directory chooser", async () => {
@@ -222,6 +244,30 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.getByText("Markdown").tagName).toBe("STRONG");
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.queryByTestId("memory-html")).not.toBeInTheDocument();
+  });
+
+  it("filters loaded memories by keyword across note content and reports no results", async () => {
+    vi.mocked(api.listMemories).mockResolvedValueOnce({
+      memories: [
+        sampleMemory,
+        {
+          ...sampleMemory,
+          id: "mem_2",
+          title: "Search target",
+          path: "Memories/Projects/search.md",
+          tags: ["needle-tag"],
+          content: "A hidden searchable phrase.",
+        },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.change(await screen.findByLabelText("Search memories"), { target: { value: "hidden searchable" } });
+    expect(await screen.findByRole("heading", { level: 2, name: "Search target" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search memories"), { target: { value: "does-not-exist" } });
+    expect(await screen.findByText("No memories match your search.")).toBeInTheDocument();
   });
 
   it("confirms and deletes the selected memory", async () => {
@@ -424,6 +470,49 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.queryByText("之前讨论过 LuminaMind")).not.toBeInTheDocument();
   });
 
+  it("searches saved conversations through the API and clears the query", async () => {
+    render(<App />);
+    await screen.findByText("Project planning");
+
+    fireEvent.change(screen.getByLabelText("Search conversations"), { target: { value: "needle" } });
+    await waitFor(() => expect(api.listConversations).toHaveBeenCalledWith("needle"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear conversation search" }));
+    await waitFor(() => expect(api.listConversations).toHaveBeenCalledWith(""));
+  });
+
+  it("ignores failures from stale conversation search requests", async () => {
+    let rejectStaleSearch!: (reason: Error) => void;
+    vi.mocked(api.listConversations)
+      .mockResolvedValueOnce({
+        conversations: [{
+          id: "conv_saved",
+          title: "Project planning",
+          created_at: "2026-05-23T10:00:00",
+          updated_at: "2026-05-23T10:01:00",
+          message_count: 2,
+          pinned: false,
+        }],
+      })
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectStaleSearch = reject;
+      }))
+      .mockResolvedValueOnce({ conversations: [] });
+    render(<App />);
+    await screen.findByText("Project planning");
+
+    fireEvent.change(screen.getByLabelText("Search conversations"), { target: { value: "older" } });
+    await waitFor(() => expect(api.listConversations).toHaveBeenCalledWith("older"));
+    fireEvent.change(screen.getByLabelText("Search conversations"), { target: { value: "newer" } });
+    await waitFor(() => expect(api.listConversations).toHaveBeenCalledWith("newer"));
+
+    await act(async () => {
+      rejectStaleSearch(new Error("Stale search failed"));
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Stale search failed")).not.toBeInTheDocument();
+  });
+
   it("opens the keyboard conversation menu, pins a chat, and dismisses the menu", async () => {
     vi.mocked(api.listConversations).mockResolvedValueOnce({
       conversations: [
@@ -502,7 +591,7 @@ describe("LuminaMind MVP frontend", () => {
 
     const reviewNavigation = await screen.findByRole("button", { name: "Review, 1 pending" });
     fireEvent.click(reviewNavigation);
-    expect(await screen.findByText("新的长期偏好")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "新的长期偏好" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Accept 新的长期偏好" }));
     await waitFor(() => expect(api.acceptSuggestion).toHaveBeenCalledWith("sug_1"));
@@ -525,6 +614,31 @@ describe("LuminaMind MVP frontend", () => {
 
     expect(await screen.findByText("accepted")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept 已自动记录" })).toBeDisabled();
+  });
+
+  it("filters review records by status and shows the selected detail panel", async () => {
+    vi.mocked(api.listSuggestions).mockResolvedValueOnce({
+      suggestions: [
+        {
+          id: "sug_pending", conversation_id: "conv_1", action: "create", title: "Pending record",
+          content: "Pending content", type: "project", tags: [], importance: 3,
+          confidence: 0.8, target_note_id: null, reason: "Needs review", status: "pending",
+        },
+        {
+          id: "sug_accepted", conversation_id: "conv_1", action: "create", title: "Accepted record",
+          content: "Accepted content", type: "log", tags: [], importance: 3,
+          confidence: 0.8, target_note_id: null, reason: "Already saved", status: "accepted",
+        },
+      ],
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review, 1 pending" }));
+    fireEvent.click(screen.getByRole("button", { name: "Accepted" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Accepted record" })).toBeInTheDocument();
+    expect(screen.queryByText("Pending record")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept Accepted record" })).toBeDisabled();
   });
 
   it("locks only the suggestion being accepted while processing", async () => {
@@ -648,7 +762,7 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Review, 1 pending" }));
 
-    expect(await screen.findByText("Rendered suggestion")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Rendered suggestion" })).toBeInTheDocument();
     expect(container.querySelector(".suggestion-content .katex")).toBeInTheDocument();
     expect(container.querySelector(".suggestion-content code.hljs.language-ts")).toBeInTheDocument();
     expect(screen.getByText("Useful").tagName).toBe("STRONG");
@@ -773,7 +887,7 @@ describe("LuminaMind MVP frontend", () => {
       memory_suggestions: [liveSuggestion],
     });
 
-    expect(await screen.findByText("Live review suggestion")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Live review suggestion" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Review, 1 pending" })).toBeInTheDocument();
   });
 
