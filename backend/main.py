@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from threading import Lock
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from lumina.config import AppSettings
+from lumina.embedding import EmbeddingConfigurationError, embedding_signature
 from lumina.conversations import (
     add_message,
     create_conversation,
@@ -54,12 +59,17 @@ from lumina.suggestions import (
 from lumina.vault import initialize_vault
 
 
+logger = logging.getLogger(__name__)
+
+
 class AppState:
     vault_root: Path | None = None
 
 
 state = AppState()
 app = FastAPI(title="LuminaMind Agent")
+_index_locks_guard = Lock()
+_index_locks: dict[Path, Lock] = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,9 +87,46 @@ def require_vault() -> Path:
     return state.vault_root
 
 
-def chat_memory_index_refresh_required(vault_root: Path) -> bool:
-    status = index_status(vault_root)
-    return status["indexed_notes"] == 0 or status["indexed_chunks"] == 0
+def index_lock(vault_root: Path) -> Lock:
+    with _index_locks_guard:
+        return _index_locks.setdefault(vault_root.resolve(), Lock())
+
+
+def refresh_index(vault_root: Path, settings: AppSettings, scan_first: bool = False):
+    with index_lock(vault_root):
+        if scan_first:
+            scan_vault(vault_root)
+        return rebuild_index(vault_root, settings=settings)
+
+
+def refresh_index_request(vault_root: Path, settings: AppSettings, scan_first: bool = False):
+    try:
+        return refresh_index(vault_root, settings, scan_first=scan_first)
+    except EmbeddingConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+def background_refresh_index(vault_root: Path) -> None:
+    try:
+        refresh_index(vault_root, AppSettings.load(vault_root), scan_first=True)
+    except Exception:
+        logger.exception("Background index refresh failed for %s", vault_root)
+
+
+def chat_memory_index_refresh_required(vault_root: Path, settings: AppSettings) -> bool:
+    status = index_status(vault_root, settings)
+    return (
+        status["indexed_notes"] == 0
+        or status["indexed_chunks"] == 0
+        or status["embedding_index_stale"]
+    )
+
+
+def resolve_chat_settings(settings: AppSettings, chat_model_id: str | None) -> AppSettings:
+    try:
+        return settings.with_chat_model(chat_model_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Selected chat model is not a configured chat model.") from None
 
 
 @app.get("/api/settings")
@@ -89,13 +136,37 @@ def get_settings() -> dict:
 
 
 @app.post("/api/settings")
-def post_settings(settings: AppSettings) -> dict:
+def post_settings(settings: AppSettings, background_tasks: BackgroundTasks) -> dict:
+    previous_settings = AppSettings.load(state.vault_root) if state.vault_root else None
     if settings.vault_path:
         vault = initialize_vault(settings.vault_path)
         state.vault_root = vault.root
     vault_root = require_vault()
     settings.save(vault_root)
+    if previous_settings and embedding_signature(previous_settings) != embedding_signature(settings):
+        background_tasks.add_task(background_refresh_index, vault_root)
     return AppSettings.load(vault_root).model_dump()
+
+
+@app.get("/api/provider-models/openrouter")
+def get_openrouter_models(capability: Literal["chat", "embedding"]) -> dict:
+    settings = AppSettings.load(state.vault_root)
+    suffix = "/models" if capability == "chat" else "/embeddings/models"
+    headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"} if settings.openrouter_api_key else {}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(f"{settings.openrouter_base_url.rstrip('/')}{suffix}", headers=headers)
+            response.raise_for_status()
+            items = response.json().get("data", [])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="OpenRouter model catalog is unavailable.") from exc
+    return {
+        "models": [
+            {"id": item["id"], "name": item.get("name") or item["id"]}
+            for item in items
+            if isinstance(item, dict) and item.get("id")
+        ]
+    }
 
 
 @app.post("/api/vault/select")
@@ -118,7 +189,7 @@ def vault_status() -> dict:
         "path": str(vault_root),
         "exists": vault_root.exists(),
         "settings": AppSettings.load(vault_root).model_dump(),
-        "index": index_status(vault_root),
+        "index": index_status(vault_root, AppSettings.load(vault_root)),
     }
 
 
@@ -186,28 +257,28 @@ def api_delete_memory(memory_id: str) -> dict:
     deleted = delete_memory(vault_root, memory_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory not found")
-    rebuild_index(vault_root, settings=AppSettings.load(vault_root))
+    refresh_index(vault_root, AppSettings.load(vault_root))
     return {"deleted": True}
 
 
 @app.post("/api/index/rebuild")
 def api_rebuild_index() -> dict:
     vault_root = require_vault()
-    summary = rebuild_index(vault_root, settings=AppSettings.load(vault_root))
+    summary = refresh_index_request(vault_root, AppSettings.load(vault_root))
     return summary.model_dump()
 
 
 @app.post("/api/index/update")
 def api_update_index() -> dict:
     vault_root = require_vault()
-    scan_vault(vault_root)
-    summary = rebuild_index(vault_root, settings=AppSettings.load(vault_root))
+    summary = refresh_index_request(vault_root, AppSettings.load(vault_root), scan_first=True)
     return summary.model_dump()
 
 
 @app.get("/api/index/status")
 def api_index_status() -> dict:
-    return index_status(require_vault())
+    vault_root = require_vault()
+    return index_status(vault_root, AppSettings.load(vault_root))
 
 
 @app.post("/api/retrieve")
@@ -271,8 +342,8 @@ def api_get_conversation_messages(conversation_id: str) -> dict:
 @app.post("/api/chat")
 def api_chat(payload: ChatRequest) -> dict:
     vault_root = require_vault()
-    settings = AppSettings.load(vault_root)
-    memory_index_refresh_required = chat_memory_index_refresh_required(vault_root)
+    settings = resolve_chat_settings(AppSettings.load(vault_root), payload.chat_model_id)
+    memory_index_refresh_required = chat_memory_index_refresh_required(vault_root, settings)
     all_history = load_messages(vault_root, payload.conversation_id) if payload.conversation_id else []
     memories = retrieve_memories(vault_root, payload.message, settings=settings)
     try:
@@ -305,7 +376,8 @@ def api_chat(payload: ChatRequest) -> dict:
 def api_generate_suggestions(payload: GenerateSuggestionsRequest | None = None) -> dict:
     conversation_id = payload.conversation_id if payload else None
     vault_root = require_vault()
-    suggestions = generate_suggestions(vault_root, conversation_id, settings=AppSettings.load(vault_root))
+    settings = resolve_chat_settings(AppSettings.load(vault_root), payload.chat_model_id if payload else None)
+    suggestions = generate_suggestions(vault_root, conversation_id, settings=settings)
     return {"suggestions": [suggestion.model_dump() for suggestion in suggestions]}
 
 
@@ -341,5 +413,5 @@ def api_edit_suggestion(suggestion_id: str, payload: MemoryCreate) -> dict:
         source=payload.source,
         links=payload.links,
     )
-    rebuild_index(vault_root, settings=AppSettings.load(vault_root))
+    refresh_index(vault_root, AppSettings.load(vault_root))
     return {"previous": rejected.model_dump(), "memory": created.model_dump()}

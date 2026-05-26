@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 CHAT_CONTEXT_SAFETY_TOKENS = 1_024
 DEFAULT_CHAT_CONTEXT_WINDOW_TOKENS = 32_768
 DEEPSEEK_CHAT_CONTEXT_WINDOW_TOKENS = 1_000_000
@@ -18,6 +19,23 @@ DEEPSEEK_LONG_CONTEXT_MODELS = {
     "deepseek-v4-flash",
     "deepseek-v4-pro",
 }
+
+
+class ConfiguredModel(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    provider: Literal["deepseek", "ollama", "openrouter", "local_hash"]
+    capability: Literal["chat", "embedding"]
+    model: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_provider_capability(self) -> "ConfiguredModel":
+        if self.provider == "deepseek" and self.capability != "chat":
+            raise ValueError("DeepSeek models may only be assigned to chat")
+        if self.provider == "local_hash":
+            if self.capability != "embedding" or self.model != "local-hash-384":
+                raise ValueError("Local hash is an embedding-only model with id local-hash-384")
+        return self
 
 
 class AppSettings(BaseModel):
@@ -30,6 +48,11 @@ class AppSettings(BaseModel):
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     ollama_chat_model: str = "qwen2.5:7b"
     ollama_embedding_model: str = "bge-m3"
+    openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
+    openrouter_api_key: str = ""
+    configured_models: list[ConfiguredModel] = Field(default_factory=list)
+    chat_model_id: str = ""
+    embedding_model_id: str = ""
     embedding_fallback_to_local: bool = True
     chat_context_window_tokens: int | None = Field(default=None, ge=16_384)
     chat_max_output_tokens: int = Field(default=8_192, ge=1)
@@ -37,12 +60,53 @@ class AppSettings(BaseModel):
     def effective_chat_context_window_tokens(self) -> int:
         if self.chat_context_window_tokens is not None:
             return self.chat_context_window_tokens
-        if self.llm_provider == "deepseek" and self.deepseek_model.lower() in DEEPSEEK_LONG_CONTEXT_MODELS:
+        chat_model = self.chat_model()
+        if chat_model.provider == "deepseek" and chat_model.model.lower() in DEEPSEEK_LONG_CONTEXT_MODELS:
             return DEEPSEEK_CHAT_CONTEXT_WINDOW_TOKENS
         return DEFAULT_CHAT_CONTEXT_WINDOW_TOKENS
 
     @model_validator(mode="after")
-    def validate_chat_context_budget(self) -> "AppSettings":
+    def migrate_models_and_validate_chat_context_budget(self) -> "AppSettings":
+        if not self.configured_models:
+            self.configured_models = [
+                ConfiguredModel(
+                    id="deepseek_chat",
+                    name="DeepSeek Chat",
+                    provider="deepseek",
+                    capability="chat",
+                    model=self.deepseek_model,
+                ),
+                ConfiguredModel(
+                    id="ollama_chat",
+                    name="Ollama Chat",
+                    provider="ollama",
+                    capability="chat",
+                    model=self.ollama_chat_model,
+                ),
+                ConfiguredModel(
+                    id="ollama_embedding",
+                    name="Ollama Embedding",
+                    provider="ollama",
+                    capability="embedding",
+                    model=self.ollama_embedding_model,
+                ),
+                ConfiguredModel(
+                    id="local_hash_embedding",
+                    name="Local Hash",
+                    provider="local_hash",
+                    capability="embedding",
+                    model="local-hash-384",
+                ),
+            ]
+            self.chat_model_id = "ollama_chat" if self.llm_provider == "ollama" else "deepseek_chat"
+            legacy_embedding_fields = {"ollama_embedding_model", "embedding_fallback_to_local"}
+            self.embedding_model_id = (
+                "ollama_embedding"
+                if self.model_fields_set & legacy_embedding_fields
+                else "local_hash_embedding"
+            )
+        self.chat_model()
+        self.embedding_model()
         context_window = self.effective_chat_context_window_tokens()
         if self.chat_max_output_tokens + CHAT_CONTEXT_SAFETY_TOKENS >= context_window:
             raise ValueError(
@@ -50,6 +114,25 @@ class AppSettings(BaseModel):
                 "the effective chat context window"
             )
         return self
+
+    def _assigned_model(self, model_id: str, capability: Literal["chat", "embedding"]) -> ConfiguredModel:
+        model = next((item for item in self.configured_models if item.id == model_id), None)
+        if model is None:
+            raise ValueError(f"{capability}_model_id must refer to a configured model")
+        if model.capability != capability:
+            raise ValueError(f"{capability}_model_id must refer to a {capability} model")
+        return model
+
+    def chat_model(self) -> ConfiguredModel:
+        return self._assigned_model(self.chat_model_id, "chat")
+
+    def with_chat_model(self, chat_model_id: str | None) -> "AppSettings":
+        if not chat_model_id or chat_model_id == self.chat_model_id:
+            return self
+        return type(self).model_validate({**self.model_dump(), "chat_model_id": chat_model_id})
+
+    def embedding_model(self) -> ConfiguredModel:
+        return self._assigned_model(self.embedding_model_id, "embedding")
 
     @classmethod
     def config_path(cls, vault_root: Path) -> Path:

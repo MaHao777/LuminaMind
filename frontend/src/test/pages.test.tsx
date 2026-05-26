@@ -31,6 +31,15 @@ vi.mock("../services/api", () => ({
     ollama_base_url: "http://127.0.0.1:11434",
     ollama_chat_model: "qwen2.5:7b",
     ollama_embedding_model: "bge-m3",
+    openrouter_base_url: "https://openrouter.ai/api/v1",
+    openrouter_api_key: "",
+    configured_models: [
+      { id: "deepseek-chat", name: "DeepSeek Chat", provider: "deepseek", capability: "chat", model: "deepseek-chat" },
+      { id: "ollama-chat", name: "Ollama Chat", provider: "ollama", capability: "chat", model: "qwen2.5:7b" },
+      { id: "local-embedding", name: "Local Hash", provider: "local_hash", capability: "embedding", model: "local-hash-384" },
+    ],
+    chat_model_id: "deepseek-chat",
+    embedding_model_id: "local-embedding",
     review_mode: "manual",
     chat_context_window_tokens: null,
     chat_max_output_tokens: 8192,
@@ -40,6 +49,8 @@ vi.mock("../services/api", () => ({
   scanVault: vi.fn(async () => ({ scanned_files: 1, indexed_notes: 1, skipped_files: 0 })),
   rebuildIndex: vi.fn(async () => ({ indexed_chunks: 1 })),
   updateIndex: vi.fn(async () => ({ indexed_chunks: 1 })),
+  updateIndexDeduped: vi.fn(async () => ({ indexed_chunks: 1 })),
+  listOpenRouterModels: vi.fn(async () => ({ models: [{ id: "openai/gpt-4.1-mini", name: "GPT 4.1 Mini" }] })),
   listMemories: vi.fn(async () => ({ memories: [sampleMemory] })),
   deleteMemory: vi.fn(async () => ({ deleted: true })),
   updateMemoryPin: vi.fn(async (id: string, pinned: boolean) => ({ ...sampleMemory, id, pinned })),
@@ -150,7 +161,7 @@ describe("LuminaMind MVP frontend", () => {
     expect(await screen.findByDisplayValue("D:/memory")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
-    fireEvent.change(screen.getByLabelText("LLM Provider"), { target: { value: "ollama" } });
+    fireEvent.change(screen.getByLabelText("Default Chat model"), { target: { value: "ollama-chat" } });
     fireEvent.change(screen.getByLabelText("Chat context window tokens (blank for automatic)"), {
       target: { value: "65536" },
     });
@@ -162,13 +173,30 @@ describe("LuminaMind MVP frontend", () => {
     await waitFor(() =>
       expect(api.saveSettings).toHaveBeenCalledWith(
         expect.objectContaining({
-          llm_provider: "ollama",
+          chat_model_id: "ollama-chat",
+          embedding_model_id: "local-embedding",
           chat_context_window_tokens: 65536,
           chat_max_output_tokens: 4096,
           review_mode: "auto",
         }),
       ),
     );
+  });
+
+  it("adds OpenRouter catalog models and rebuilds after changing the embedding assignment", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Models" }));
+    fireEvent.change(screen.getByLabelText("OpenRouter API key"), { target: { value: "router-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch OpenRouter embedding models" }));
+    await waitFor(() => expect(api.listOpenRouterModels).toHaveBeenCalledWith("embedding"));
+    fireEvent.click(await screen.findByRole("button", { name: "Add GPT 4.1 Mini as embedding model" }));
+    fireEvent.change(screen.getByLabelText("Embedding model"), { target: { value: "openrouter-embedding-openai-gpt-4-1-mini" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(api.updateIndexDeduped).toHaveBeenCalled());
+    expect(await screen.findByText(/Index rebuilt/)).toBeInTheDocument();
   });
 
   it("applies and persists appearance preferences from settings and the app shell", async () => {
@@ -394,15 +422,15 @@ describe("LuminaMind MVP frontend", () => {
     fireEvent.change(screen.getByPlaceholderText("Ask LuminaMind..."), { target: { value: "Needs index" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("Answer before indexing.")).toBeInTheDocument();
-    await waitFor(() => expect(api.updateIndex).toHaveBeenCalled());
-    expect(vi.mocked(api.updateIndex).mock.invocationCallOrder[0]).toBeLessThan(
+    await waitFor(() => expect(api.updateIndexDeduped).toHaveBeenCalled());
+    expect(vi.mocked(api.updateIndexDeduped).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(api.generateSuggestions).mock.invocationCallOrder[0],
     );
 
     expect(await screen.findByText("Memory update failed: Extraction unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry memory update" }));
     await waitFor(() => expect(api.generateSuggestions).toHaveBeenCalledTimes(2));
-    expect(api.updateIndex).toHaveBeenCalledTimes(1);
+    expect(api.updateIndexDeduped).toHaveBeenCalledTimes(1);
   });
 
   it("does not prompt for review when chat suggestions were automatically accepted", async () => {
@@ -558,6 +586,36 @@ describe("LuminaMind MVP frontend", () => {
     expect(container.querySelector(".chat-panel .messages .message-end")).toBeInTheDocument();
     expect(container.querySelector(".conversation-list .conversation-stack")).toBeInTheDocument();
     expect(container.querySelector(".memory-source-panel .memory-source-list")).toBeInTheDocument();
+  });
+
+  it("persists the Used memories panel collapse preference", async () => {
+    const { container } = render(<App />);
+
+    await screen.findByText("Project planning");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse used memories" }));
+    expect(container.querySelector(".chat-grid")).toHaveClass("memory-source-collapsed");
+    expect(window.localStorage.getItem("luminamind.ui.memorySourceCollapsed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand used memories" }));
+    expect(container.querySelector(".chat-grid")).not.toHaveClass("memory-source-collapsed");
+    expect(window.localStorage.getItem("luminamind.ui.memorySourceCollapsed")).toBe("false");
+  });
+
+  it("opens a compact composer model picker and forwards its selected override to postprocessing", async () => {
+    render(<App />);
+
+    const modelTrigger = await screen.findByRole("button", { name: "Response model" });
+    expect(modelTrigger).toHaveTextContent("DeepSeek Chat");
+    expect(screen.queryByRole("menu", { name: "Response models" })).not.toBeInTheDocument();
+    fireEvent.click(modelTrigger);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Use Ollama Chat" }));
+    expect(modelTrigger).toHaveTextContent("Ollama Chat");
+    expect(screen.queryByRole("menu", { name: "Response models" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Chat message"), { target: { value: "Use local chat" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(api.sendChat).toHaveBeenCalledWith("Use local chat", "conv_saved", "ollama-chat"));
+    await waitFor(() => expect(api.generateSuggestions).toHaveBeenCalledWith("conv_saved", "ollama-chat"));
   });
 
   it("loads saved conversations and can start a new chat", async () => {

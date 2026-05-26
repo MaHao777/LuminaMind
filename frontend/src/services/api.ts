@@ -1,5 +1,20 @@
 export type LlmProvider = "deepseek" | "ollama";
 export type ReviewMode = "manual" | "auto";
+export type ModelProvider = "deepseek" | "ollama" | "openrouter" | "local_hash";
+export type ModelCapability = "chat" | "embedding";
+
+export type ConfiguredModel = {
+  id: string;
+  name: string;
+  provider: ModelProvider;
+  capability: ModelCapability;
+  model: string;
+};
+
+export type ProviderModelCandidate = {
+  id: string;
+  name: string;
+};
 
 export type AppSettings = {
   vault_path: string;
@@ -11,6 +26,11 @@ export type AppSettings = {
   ollama_base_url: string;
   ollama_chat_model: string;
   ollama_embedding_model: string;
+  openrouter_base_url: string;
+  openrouter_api_key: string;
+  configured_models: ConfiguredModel[];
+  chat_model_id: string;
+  embedding_model_id: string;
   embedding_fallback_to_local?: boolean;
   chat_context_window_tokens: number | null;
   chat_max_output_tokens: number;
@@ -43,6 +63,7 @@ export type IndexSummary = {
   indexed_notes?: number;
   indexed_chunks: number;
   vector_store?: string;
+  embedding_index_stale?: boolean;
 };
 
 export type UsedMemory = {
@@ -153,8 +174,25 @@ export function rebuildIndex() {
   return request<IndexSummary>("/api/index/rebuild", { method: "POST" });
 }
 
+export function listOpenRouterModels(capability: ModelCapability) {
+  return request<{ models: ProviderModelCandidate[] }>(
+    `/api/provider-models/openrouter?capability=${encodeURIComponent(capability)}`,
+  );
+}
+
 export function updateIndex() {
   return request<IndexSummary>("/api/index/update", { method: "POST" });
+}
+
+let pendingIndexUpdate: Promise<IndexSummary> | null = null;
+
+export function updateIndexDeduped() {
+  if (!pendingIndexUpdate) {
+    pendingIndexUpdate = updateIndex().finally(() => {
+      pendingIndexUpdate = null;
+    });
+  }
+  return pendingIndexUpdate;
 }
 
 export function listMemories() {
@@ -172,10 +210,10 @@ export function updateMemoryPin(id: string, pinned: boolean) {
   });
 }
 
-export function sendChat(message: string, conversationId?: string) {
+export function sendChat(message: string, conversationId?: string, chatModelId?: string) {
   return request<ChatResponse>("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ message, conversation_id: conversationId }),
+    body: JSON.stringify({ message, conversation_id: conversationId, chat_model_id: chatModelId }),
   });
 }
 
@@ -211,10 +249,10 @@ export function listSuggestions() {
   return request<{ suggestions: MemorySuggestion[] }>("/api/memory-suggestions");
 }
 
-export function generateSuggestions(conversationId?: string) {
+export function generateSuggestions(conversationId?: string, chatModelId?: string) {
   return request<{ suggestions: MemorySuggestion[] }>("/api/memory-suggestions/generate", {
     method: "POST",
-    body: JSON.stringify({ conversation_id: conversationId }),
+    body: JSON.stringify({ conversation_id: conversationId, chat_model_id: chatModelId }),
   });
 }
 

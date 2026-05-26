@@ -2,6 +2,7 @@ export type ThemeId = "default" | "dark" | "warm";
 
 const THEME_KEY = "luminamind.ui.theme";
 const SIDEBAR_COLLAPSED_KEY = "luminamind.ui.sidebarCollapsed";
+const MEMORY_SOURCE_COLLAPSED_KEY = "luminamind.ui.memorySourceCollapsed";
 
 export function loadTheme(): ThemeId {
   try {
@@ -31,6 +32,22 @@ export function loadSidebarCollapsed(): boolean {
 export function saveSidebarCollapsed(collapsed: boolean) {
   try {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+  } catch {
+    // Ignore storage failures in restricted browser environments.
+  }
+}
+
+export function loadMemorySourceCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(MEMORY_SOURCE_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveMemorySourceCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(MEMORY_SOURCE_COLLAPSED_KEY, String(collapsed));
   } catch {
     // Ignore storage failures in restricted browser environments.
   }

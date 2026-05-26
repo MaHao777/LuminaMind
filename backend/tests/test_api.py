@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import main
 import lumina.suggestions as suggestions_module
 from main import app
-from lumina.config import AppSettings
+from lumina.config import AppSettings, ConfiguredModel
 from lumina.conversations import add_message
 from lumina.db import db_path
 from lumina.indexer import index_status, load_vectors, rebuild_index as real_rebuild_index
@@ -132,6 +132,198 @@ def test_api_updates_and_deletes_memory_files(tmp_path: Path) -> None:
 
     missing = client.delete(f"/api/memories/{created['id']}")
     assert missing.status_code == 404
+
+
+def test_openrouter_catalog_proxy_uses_capability_specific_endpoints(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "catalog-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    AppSettings(
+        vault_path=str(vault_path),
+        openrouter_base_url="https://catalog.example/api/v1",
+        openrouter_api_key="catalog-key",
+    ).save(vault_path)
+    requests: list[tuple[str, dict]] = []
+
+    class FakeResponse:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "id": "provider/embed-model" if "embeddings" in self.url else "provider/chat-model",
+                        "name": "Catalog model",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, **kwargs) -> FakeResponse:
+            requests.append((url, kwargs))
+            return FakeResponse(url)
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+
+    chat = client.get("/api/provider-models/openrouter", params={"capability": "chat"})
+    embedding = client.get("/api/provider-models/openrouter", params={"capability": "embedding"})
+
+    assert chat.json()["models"][0]["id"] == "provider/chat-model"
+    assert embedding.json()["models"][0]["id"] == "provider/embed-model"
+    assert requests[0][0] == "https://catalog.example/api/v1/models"
+    assert requests[1][0] == "https://catalog.example/api/v1/embeddings/models"
+    assert requests[0][1]["headers"]["Authorization"] == "Bearer catalog-key"
+
+
+def test_chat_reports_stale_embedding_index_without_querying_old_vector_space(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "stale-chat-index-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    client.post(
+        "/api/memories",
+        json={"title": "Status memory", "type": "project", "content": "keyword content", "importance": 3},
+    )
+    client.post("/api/vault/scan")
+    client.post("/api/index/rebuild")
+    original = AppSettings.load(vault_path)
+    switched = AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            original.chat_model(),
+            ConfiguredModel(
+                id="new-embedding",
+                name="New embedding",
+                provider="openrouter",
+                capability="embedding",
+                model="provider/new-embedding",
+            ),
+        ],
+        chat_model_id=original.chat_model_id,
+        embedding_model_id="new-embedding",
+    )
+    switched.save(vault_path)
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+
+    status = client.get("/api/index/status")
+    response = client.post("/api/chat", json={"message": "keyword"})
+
+    assert status.json()["embedding_index_stale"] is True
+    assert response.status_code == 200
+    assert response.json()["memory_index_refresh_required"] is True
+
+
+def test_rebuild_reports_missing_openrouter_embedding_key_as_configuration_error(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "missing-router-key-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    client.post(
+        "/api/memories",
+        json={"title": "Needs embedding", "type": "project", "content": "Index this", "importance": 3},
+    )
+    client.post("/api/vault/scan")
+    current = AppSettings.load(vault_path)
+    AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            current.chat_model(),
+            ConfiguredModel(
+                id="router-embedding",
+                name="Router embedding",
+                provider="openrouter",
+                capability="embedding",
+                model="provider/embed",
+            ),
+        ],
+        chat_model_id=current.chat_model_id,
+        embedding_model_id="router-embedding",
+    ).save(vault_path)
+
+    response = client.post("/api/index/rebuild")
+
+    assert response.status_code == 400
+    assert "OpenRouter API key" in response.json()["detail"]
+
+
+def test_chat_model_override_routes_answer_and_memory_generation_through_selected_chat_model(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "chat-model-override-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    current = AppSettings.load(vault_path)
+    AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            current.chat_model(),
+            ConfiguredModel(
+                id="alternate-chat",
+                name="Alternate Chat",
+                provider="ollama",
+                capability="chat",
+                model="alternate-chat-model",
+            ),
+            current.embedding_model(),
+        ],
+        chat_model_id=current.chat_model_id,
+        embedding_model_id=current.embedding_model_id,
+    ).save(vault_path)
+    answer_models: list[str] = []
+    suggestion_models: list[str] = []
+
+    def fake_generate_answer(settings, message, memories, history):
+        answer_models.append(settings.chat_model_id)
+        return "answer"
+
+    def fake_generate_suggestions(vault_root, conversation_id=None, settings=None):
+        suggestion_models.append(settings.chat_model_id)
+        return []
+
+    monkeypatch.setattr(main, "generate_answer", fake_generate_answer)
+    monkeypatch.setattr(main, "generate_suggestions", fake_generate_suggestions)
+
+    response = client.post(
+        "/api/chat",
+        json={"message": "Use the alternate model", "chat_model_id": "alternate-chat"},
+    )
+    conversation_id = response.json()["conversation_id"]
+    generated = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": conversation_id, "chat_model_id": "alternate-chat"},
+    )
+
+    assert response.status_code == 200
+    assert generated.status_code == 200
+    assert answer_models == ["alternate-chat"]
+    assert suggestion_models == ["alternate-chat"]
+    assert AppSettings.load(vault_path).chat_model_id == current.chat_model_id
+
+
+def test_chat_model_override_rejects_an_embedding_model_assignment(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "chat-model-invalid-override-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    settings = AppSettings.load(vault_path)
+
+    response = client.post(
+        "/api/chat",
+        json={"message": "Do not run", "chat_model_id": settings.embedding_model_id},
+    )
+
+    assert response.status_code == 422
+    assert "chat model" in response.json()["detail"]
 
 
 def test_memory_pin_persists_to_markdown_and_sorts_pinned_notes_first(tmp_path: Path) -> None:

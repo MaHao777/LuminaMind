@@ -8,8 +8,8 @@ from pathlib import Path
 
 from .config import AppSettings
 from .db import connect
-from .embedding import EmbeddingProvider, cosine_similarity, provider_from_settings
-from .indexer import load_vectors
+from .embedding import EmbeddingProvider, cosine_similarity, embedding_signature, provider_from_settings
+from .indexer import load_vector_index
 from .models import MemoryNote, RetrievalResult
 
 
@@ -67,11 +67,18 @@ def _semantic_scores(
     notes: dict[str, MemoryNote],
     query: str,
     provider: EmbeddingProvider,
+    settings: AppSettings | None = None,
 ) -> dict[str, float]:
-    vectors = load_vectors(vault_root)
+    vector_index = load_vector_index(vault_root)
+    vectors = vector_index["vectors"]
     if not vectors:
         return {note_id: 0.0 for note_id in notes}
-    query_embedding = provider.embed([query])[0]
+    if settings is not None and vector_index["embedding_signature"] != embedding_signature(settings):
+        return {note_id: 0.0 for note_id in notes}
+    try:
+        query_embedding = provider.embed([query])[0]
+    except Exception:
+        return {note_id: 0.0 for note_id in notes}
     scores: dict[str, float] = {note_id: 0.0 for note_id in notes}
     for item in vectors:
         note_id = item["note_id"]
@@ -120,7 +127,7 @@ def retrieve_memories(
 
     provider = embedding_provider or provider_from_settings(settings)
     keyword = _keyword_scores(notes, query)
-    semantic = _semantic_scores(vault_root, notes, query, provider)
+    semantic = _semantic_scores(vault_root, notes, query, provider, settings)
     link = _link_scores(notes, query, keyword) if include_graph_expand else {note_id: 0.0 for note_id in notes}
 
     results: list[RetrievalResult] = []
@@ -157,4 +164,3 @@ def retrieve_memories(
         )
 
     return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
-

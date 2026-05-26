@@ -1,4 +1,4 @@
-import { Pin, Plus, Search, Send, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, PanelRightClose, PanelRightOpen, Pin, Plus, Search, Send, Trash2, X } from "lucide-react";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
@@ -9,11 +9,13 @@ import {
   getConversationMessages,
   listConversations,
   sendChat,
-  updateIndex,
+  updateIndexDeduped,
   updateConversation,
+  type ConfiguredModel,
   type ConversationSummary,
   type UsedMemory,
 } from "../services/api";
+import { loadMemorySourceCollapsed, saveMemorySourceCollapsed } from "../services/uiPreferences";
 
 type Message = {
   role: "user" | "assistant";
@@ -36,6 +38,7 @@ type PendingChat = {
 
 type PostprocessTask = {
   conversationId: string;
+  chatModelId?: string;
   refreshIndex: boolean;
   vaultPath?: string;
 };
@@ -43,6 +46,8 @@ type PostprocessTask = {
 type Props = {
   hidden?: boolean;
   vaultPath?: string;
+  chatModels?: ConfiguredModel[];
+  defaultChatModelId?: string;
   pendingSuggestionCount: number;
   onSuggestionsChanged?: () => void | Promise<void>;
 };
@@ -71,21 +76,32 @@ function toMessages(messages: Array<{ role: string; content: string }>): Message
   }));
 }
 
-export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, onSuggestionsChanged }: Props) {
+export function ChatPage({
+  hidden = false,
+  vaultPath,
+  chatModels = [],
+  defaultChatModelId,
+  pendingSuggestionCount,
+  onSuggestionsChanged,
+}: Props) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationQuery, setConversationQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [usedMemories, setUsedMemories] = useState<UsedMemory[]>([]);
   const [input, setInput] = useState("");
+  const [chatModelId, setChatModelId] = useState(defaultChatModelId ?? "");
+  const [chatModelMenuOpen, setChatModelMenuOpen] = useState(false);
   const [pendingChat, setPendingChat] = useState<PendingChat | null>(null);
   const [error, setError] = useState("");
   const [chatError, setChatError] = useState("");
   const [postprocessError, setPostprocessError] = useState("");
   const [retryPostprocess, setRetryPostprocess] = useState<PostprocessTask | null>(null);
   const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
+  const [memorySourceCollapsed, setMemorySourceCollapsed] = useState(() => loadMemorySourceCollapsed());
   const messageEndRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const chatModelMenuRef = useRef<HTMLDivElement>(null);
   const vaultPathRef = useRef(vaultPath);
   const conversationIdRef = useRef(conversationId);
   const conversationQueryRef = useRef(conversationQuery);
@@ -108,6 +124,10 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     && (pendingChat.vaultPath === undefined || pendingChat.vaultPath === vaultPath),
   );
   const requestInFlight = pendingChat !== null;
+  const selectedChatModelId = chatModels.some((model) => model.id === chatModelId)
+    ? chatModelId
+    : (defaultChatModelId ?? "");
+  const selectedChatModel = chatModels.find((model) => model.id === selectedChatModelId);
 
   function selectConversation(nextId?: string) {
     conversationIdRef.current = nextId;
@@ -134,11 +154,15 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
         if (!belongsToCurrentVault()) return;
         const vaultKey = task.vaultPath ?? vaultPathRef.current ?? "__default__";
         if (task.refreshIndex && refreshedIndexVaultRef.current !== vaultKey) {
-          await updateIndex();
+          await updateIndexDeduped();
           if (!belongsToCurrentVault()) return;
           refreshedIndexVaultRef.current = vaultKey;
         }
-        await generateSuggestions(task.conversationId);
+        if (task.chatModelId) {
+          await generateSuggestions(task.conversationId, task.chatModelId);
+        } else {
+          await generateSuggestions(task.conversationId);
+        }
         if (!belongsToCurrentVault()) return;
         await onSuggestionsChangedRef.current?.();
       })
@@ -153,6 +177,30 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
   useEffect(() => {
     messageEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
   }, [messages, loading, chatError]);
+
+  useEffect(() => {
+    setChatModelId(defaultChatModelId ?? "");
+    setChatModelMenuOpen(false);
+  }, [vaultPath, defaultChatModelId]);
+
+  useEffect(() => {
+    if (!chatModelMenuOpen) return undefined;
+
+    function closeOnOutsideClick(event: globalThis.MouseEvent) {
+      if (!chatModelMenuRef.current?.contains(event.target as Node)) setChatModelMenuOpen(false);
+    }
+
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setChatModelMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [chatModelMenuOpen]);
 
   useEffect(() => {
     if (!conversationMenu) return undefined;
@@ -365,6 +413,7 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     if (!text || pendingChatRef.current) return;
     const requestId = ++requestIdRef.current;
     const submittedConversationId = conversationIdRef.current;
+    const submittedChatModelId = selectedChatModelId || undefined;
     const activeVaultPath = vaultPathRef.current;
     const submittedMessages = [...messages, { role: "user", content: text } as Message];
     const request: PendingChat = {
@@ -382,7 +431,9 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     setChatError("");
 
     try {
-      const response = await sendChat(text, submittedConversationId);
+      const response = submittedChatModelId
+        ? await sendChat(text, submittedConversationId, submittedChatModelId)
+        : await sendChat(text, submittedConversationId);
       if (!isPendingRequest(requestId)) return;
       if (activeVaultPath !== undefined && activeVaultPath !== vaultPathRef.current) return;
       updatePendingChat(null);
@@ -394,6 +445,7 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
       if (response.conversation_id) {
         enqueuePostprocess({
           conversationId: response.conversation_id,
+          chatModelId: submittedChatModelId,
           refreshIndex: Boolean(response.memory_index_refresh_required),
           vaultPath: activeVaultPath ?? vaultPathRef.current,
         });
@@ -413,8 +465,16 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
     }
   }
 
+  function toggleMemorySourcePanel() {
+    setMemorySourceCollapsed((current) => {
+      const next = !current;
+      saveMemorySourceCollapsed(next);
+      return next;
+    });
+  }
+
   return (
-    <section className="page-grid chat-grid" hidden={hidden}>
+    <section className={memorySourceCollapsed ? "page-grid chat-grid memory-source-collapsed" : "page-grid chat-grid"} hidden={hidden}>
       <div className="panel conversation-list">
         <div className="panel-header">
           <h1>Chat</h1>
@@ -563,20 +623,69 @@ export function ChatPage({ hidden = false, vaultPath, pendingSuggestionCount, on
 
         <form className="composer" onSubmit={handleSubmit}>
           <input
+            className="composer-input"
             value={input}
             onChange={(event) => setInput(event.target.value)}
             placeholder="Ask LuminaMind..."
             aria-label="Chat message"
           />
-          <button type="submit" disabled={requestInFlight || !input.trim()}>
-            <Send size={16} aria-hidden />
-            Send
-          </button>
+          <div className="composer-footer">
+            <div className="composer-model-picker" ref={chatModelMenuRef}>
+              <button
+                type="button"
+                className="composer-model-trigger"
+                aria-label="Response model"
+                aria-haspopup="menu"
+                aria-expanded={chatModelMenuOpen}
+                disabled={chatModels.length === 0}
+                onClick={() => setChatModelMenuOpen((current) => !current)}
+              >
+                <span className="composer-model-name">{selectedChatModel?.name ?? "Model"}</span>
+                <ChevronDown size={13} aria-hidden />
+              </button>
+              {chatModelMenuOpen ? (
+                <div className="composer-model-menu" role="menu" aria-label="Response models">
+                  {chatModels.map((model) => (
+                    <button
+                      type="button"
+                      key={model.id}
+                      role="menuitemradio"
+                      aria-checked={model.id === selectedChatModelId}
+                      aria-label={`Use ${model.name}`}
+                      className={model.id === selectedChatModelId ? "active" : ""}
+                      onClick={() => {
+                        setChatModelId(model.id);
+                        setChatModelMenuOpen(false);
+                      }}
+                    >
+                      <span>{model.name}</span>
+                      {model.id === selectedChatModelId ? <Check size={14} aria-hidden /> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <button className="composer-send" type="submit" aria-label="Send" disabled={requestInFlight || !input.trim()}>
+              <Send size={16} aria-hidden />
+            </button>
+          </div>
         </form>
       </section>
 
       <aside className="panel memory-source-panel">
-        <h2>Used memories</h2>
+        <div className="memory-source-header">
+          <h2>Used memories</h2>
+          <button
+            type="button"
+            className="icon-button memory-source-toggle"
+            aria-label={memorySourceCollapsed ? "Expand used memories" : "Collapse used memories"}
+            onClick={toggleMemorySourcePanel}
+          >
+            {memorySourceCollapsed
+              ? <PanelRightOpen size={17} aria-hidden />
+              : <PanelRightClose size={17} aria-hidden />}
+          </button>
+        </div>
         <div className="memory-source-list">
           {usedMemories.length === 0 ? (
             <div className="empty-state">No memories used yet.</div>

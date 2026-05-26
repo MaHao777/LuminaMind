@@ -175,7 +175,12 @@ p {
 }
 
 .chat-grid {
-  grid-template-columns: 220px minmax(360px, 1fr) 280px;
+  grid-template-columns: 280px minmax(360px, 1fr) 280px;
+  transition: grid-template-columns 180ms ease;
+}
+
+.chat-grid.memory-source-collapsed {
+  grid-template-columns: 280px minmax(360px, 1fr) 60px;
 }
 
 .chat-grid[hidden] {
@@ -523,8 +528,80 @@ p {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr 92px;
-  gap: 10px;
+  gap: 5px;
+  border: 1px solid #c7d0d9;
+  border-radius: 16px;
+  padding: 8px 9px 8px 12px;
+  background: #fff;
+}
+
+.composer-input {
+  min-height: 30px;
+  border: 0;
+  padding: 0 4px;
+  background: transparent;
+  outline: none;
+}
+
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.composer-model-picker {
+  position: relative;
+}
+
+.composer-model-trigger {
+  gap: 4px;
+  min-height: 30px;
+  max-width: 150px;
+  border-color: transparent;
+  border-radius: 999px;
+  padding: 0 7px 0 10px;
+  background: transparent;
+  color: #637282;
+  font-size: 13px;
+}
+
+.composer-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-model-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 10;
+  display: grid;
+  gap: 3px;
+  min-width: 188px;
+  border: 1px solid #c7d0d9;
+  border-radius: 10px;
+  padding: 5px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(30 43 56 / 12%);
+}
+
+.composer-model-menu button {
+  justify-content: space-between;
+  min-height: 32px;
+  border-color: transparent;
+  padding: 0 9px;
+  background: transparent;
+  color: #283541;
+  font-size: 13px;
+}
+
+.composer-send {
+  width: 34px;
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 0;
 }
 
 .memory-source-panel {
@@ -532,6 +609,47 @@ p {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+  transition: padding 180ms ease;
+}
+
+.memory-source-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.memory-source-header h2 {
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 1;
+  transition: max-width 180ms ease, opacity 120ms ease;
+}
+
+.memory-source-toggle {
+  flex: 0 0 auto;
+}
+
+.memory-source-list {
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+
+.memory-source-collapsed .memory-source-panel {
+  padding: 14px 10px;
+}
+
+.memory-source-collapsed .memory-source-header {
+  justify-content: center;
+}
+
+.memory-source-collapsed .memory-source-header h2,
+.memory-source-collapsed .memory-source-list {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .memory-source-list {
@@ -817,6 +935,57 @@ pre {
   font-size: 13px;
 }
 
+.model-settings-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 12px;
+}
+
+.model-settings-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.model-settings-section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.configured-model-group {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 7px;
+  padding: 10px;
+}
+
+.model-group-header,
+.model-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-group-header {
+  justify-content: space-between;
+}
+
+.model-catalog-candidate {
+  justify-content: flex-start;
+}
+
+.configured-model-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 112px minmax(160px, 1.25fr) 36px;
+  gap: 8px;
+}
+
+.configured-model-row input,
+.configured-model-row select {
+  min-width: 0;
+}
+
 .icon-text-button {
   background: #f8fafc;
   color: #2b343d;
@@ -886,6 +1055,25 @@ pre {
   .chat-grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(96px, 0.75fr) minmax(240px, 2fr) minmax(96px, 0.75fr);
+  }
+
+  .chat-grid.memory-source-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-source-collapsed .memory-source-panel {
+    padding: 14px;
+  }
+
+  .memory-source-collapsed .memory-source-header {
+    justify-content: space-between;
+  }
+
+  .memory-source-collapsed .memory-source-header h2,
+  .memory-source-collapsed .memory-source-list {
+    max-width: none;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .settings-layout {
@@ -966,9 +1154,9 @@ pre {
   --ui-selected-border: #9e7d54;
   --ui-code: #f0e7d8;
   --ui-link: #80613b;
-  --ui-danger-bg: #faede7;
-  --ui-danger-border: #dfb9a8;
-  --ui-danger-text: #873f31;
+  --ui-danger-bg: #f4ddd4;
+  --ui-danger-border: #b36a55;
+  --ui-danger-text: #702719;
   --ui-success-bg: #ecf1df;
   --ui-success-border: #bccb99;
   --ui-success-text: #4f6031;
@@ -1024,10 +1212,52 @@ pre {
   color: var(--ui-text);
 }
 
+.app-shell .composer {
+  border-color: var(--ui-border);
+  background: var(--ui-input);
+}
+
+.app-shell .composer-input {
+  border-color: transparent;
+  background: transparent;
+}
+
 .app-shell button {
   border-color: var(--ui-primary);
   background: var(--ui-primary);
   color: var(--ui-primary-text);
+}
+
+.app-shell .composer-model-trigger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-muted);
+}
+
+.app-shell .composer-model-trigger:hover,
+.app-shell .composer-model-trigger:focus-visible {
+  border-color: transparent;
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+
+.app-shell .composer-model-menu {
+  border-color: var(--ui-border);
+  background: var(--ui-panel);
+}
+
+.app-shell .composer-model-menu button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-text);
+}
+
+.app-shell .composer-model-menu button:hover,
+.app-shell .composer-model-menu button:focus-visible,
+.app-shell .composer-model-menu button.active {
+  border-color: transparent;
+  background: var(--ui-hover);
+  color: var(--ui-text);
 }
 
 .app-shell button.secondary,
@@ -1038,6 +1268,30 @@ pre {
   border-color: var(--ui-border);
   background: var(--ui-subtle);
   color: var(--ui-text);
+}
+
+.app-shell .conversation-menu button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-text);
+}
+
+.app-shell .conversation-menu button:hover,
+.app-shell .conversation-menu button:focus-visible {
+  border-color: var(--ui-border);
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}
+
+.app-shell .conversation-menu .danger-menu-item {
+  color: var(--ui-danger-text);
+}
+
+.app-shell .conversation-menu .danger-menu-item:hover,
+.app-shell .conversation-menu .danger-menu-item:focus-visible {
+  border-color: var(--ui-danger-border);
+  background: var(--ui-danger-bg);
+  color: var(--ui-danger-text);
 }
 
 .app-shell .nav-item {
@@ -1412,10 +1666,15 @@ pre {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(180px, auto) minmax(320px, 1fr);
   }
+
 }
 
 @media (prefers-reduced-motion: reduce) {
   .app-shell,
+  .chat-grid,
+  .memory-source-panel,
+  .memory-source-header h2,
+  .memory-source-list,
   .app-shell .sidebar,
   .app-shell .brand,
   .app-shell .brand-identity,

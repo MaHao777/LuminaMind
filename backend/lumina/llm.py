@@ -6,7 +6,7 @@ import re
 
 import httpx
 
-from .config import CHAT_CONTEXT_SAFETY_TOKENS, AppSettings
+from .config import CHAT_CONTEXT_SAFETY_TOKENS, AppSettings, ConfiguredModel
 from .models import RetrievalResult
 
 
@@ -154,13 +154,18 @@ def generate_memory_suggestion_drafts(
     related_memories: list[RetrievalResult],
 ) -> list[dict]:
     prompt = build_memory_extraction_prompt(conversation_messages, related_memories)
+    model = settings.chat_model()
     try:
-        if settings.llm_provider == "deepseek":
+        if model.provider == "deepseek":
             if not settings.deepseek_api_key:
                 return []
             raw = _call_deepseek(settings, prompt)
-        elif settings.llm_provider == "ollama":
+        elif model.provider == "ollama":
             raw = _call_ollama(settings, prompt)
+        elif model.provider == "openrouter":
+            if not settings.openrouter_api_key:
+                return []
+            raw = _call_openrouter(settings, prompt, model)
         else:
             return []
     except Exception:
@@ -258,7 +263,8 @@ def generate_answer(
     conversation_history: list[dict] | None = None,
 ) -> str:
     prompt = build_rag_prompt(user_message, memories, conversation_history)
-    if settings.llm_provider == "deepseek":
+    model = settings.chat_model()
+    if model.provider == "deepseek":
         if not settings.deepseek_api_key:
             raise LLMUnavailableError(
                 "DeepSeek API key is not configured. Configure it in Settings or switch to an available Ollama model."
@@ -266,30 +272,44 @@ def generate_answer(
         try:
             return _call_deepseek(settings, prompt)
         except Exception as exc:
-            logger.exception("DeepSeek chat request failed for model %s", settings.deepseek_model)
+            logger.exception("DeepSeek chat request failed for model %s", model.model)
             raise LLMUnavailableError(
                 "DeepSeek request failed. Check the API key, model configuration, or service availability, then retry."
             ) from exc
 
-    if settings.llm_provider == "ollama":
+    if model.provider == "ollama":
         try:
             return _call_ollama(settings, prompt)
         except Exception as exc:
-            logger.exception("Ollama chat request failed for model %s", settings.ollama_chat_model)
+            logger.exception("Ollama chat request failed for model %s", model.model)
             raise LLMUnavailableError(
                 "Ollama request failed. Check that the service is running and the configured chat model is installed, then retry."
+            ) from exc
+
+    if model.provider == "openrouter":
+        if not settings.openrouter_api_key:
+            raise LLMUnavailableError(
+                "OpenRouter API key is not configured. Configure it in Settings before using the selected chat model."
+            )
+        try:
+            return _call_openrouter(settings, prompt, model)
+        except Exception as exc:
+            logger.exception("OpenRouter chat request failed for model %s", model.model)
+            raise LLMUnavailableError(
+                "OpenRouter request failed. Check the API key, model configuration, or service availability, then retry."
             ) from exc
 
     raise LLMUnavailableError("No supported LLM provider is configured.")
 
 
 def _call_deepseek(settings: AppSettings, prompt: str) -> str:
+    model = settings.chat_model()
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
             headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
             json={
-                "model": settings.deepseek_model,
+                "model": model.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
                 "max_tokens": settings.chat_max_output_tokens,
@@ -300,11 +320,12 @@ def _call_deepseek(settings: AppSettings, prompt: str) -> str:
 
 
 def _call_ollama(settings: AppSettings, prompt: str) -> str:
+    model = settings.chat_model()
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             f"{settings.ollama_base_url.rstrip('/')}/api/chat",
             json={
-                "model": settings.ollama_chat_model,
+                "model": model.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "options": {
@@ -315,3 +336,19 @@ def _call_ollama(settings: AppSettings, prompt: str) -> str:
         )
         response.raise_for_status()
         return response.json()["message"]["content"]
+
+
+def _call_openrouter(settings: AppSettings, prompt: str, model: ConfiguredModel) -> str:
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(
+            f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            json={
+                "model": model.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": settings.chat_max_output_tokens,
+            },
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]

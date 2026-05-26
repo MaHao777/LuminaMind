@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { listConversations, sendChat } from "../services/api";
+import { generateSuggestions, listConversations, sendChat } from "../services/api";
 
 describe("API error messages", () => {
   afterEach(() => {
@@ -44,5 +44,25 @@ describe("API error messages", () => {
     await listConversations("100% plan");
 
     expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:8000/api/conversations?query=100%25%20plan");
+  });
+
+  it("sends an optional chat model override for responses and suggestion generation", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ answer: "ok", used_memories: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ suggestions: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await sendChat("hello", "conv_1", "ollama-chat");
+    await generateSuggestions("conv_1", "ollama-chat");
+
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      message: "hello",
+      conversation_id: "conv_1",
+      chat_model_id: "ollama-chat",
+    });
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
+      conversation_id: "conv_1",
+      chat_model_id: "ollama-chat",
+    });
   });
 });

@@ -1,10 +1,12 @@
+import json
 from pathlib import Path
 
 import pytest
 
-from lumina.config import AppSettings
-from lumina.indexer import rebuild_index
-from lumina.llm import _call_deepseek, _call_ollama, build_rag_prompt
+from lumina.config import AppSettings, ConfiguredModel
+from lumina.embedding import OpenRouterEmbeddingProvider
+from lumina.indexer import index_status, rebuild_index
+from lumina.llm import _call_deepseek, _call_ollama, _call_openrouter, build_rag_prompt, generate_memory_suggestion_drafts
 from lumina.memory.markdown import build_markdown, parse_markdown_note
 from lumina.memory.store import create_memory, list_memories, scan_vault
 from lumina.retrieval import retrieve_memories
@@ -188,6 +190,30 @@ def test_settings_roundtrip_prefers_vault_config(tmp_path: Path) -> None:
     assert loaded.review_mode == "auto"
 
 
+def test_settings_migrate_legacy_provider_fields_to_named_assignments(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "legacy-settings-vault")
+    AppSettings.config_path(vault.root).write_text(
+        json.dumps(
+            {
+                "vault_path": str(vault.root),
+                "llm_provider": "ollama",
+                "ollama_chat_model": "legacy-chat",
+                "ollama_embedding_model": "legacy-embed",
+                "embedding_fallback_to_local": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = AppSettings.load(vault.root)
+
+    assert settings.chat_model().provider == "ollama"
+    assert settings.chat_model().model == "legacy-chat"
+    assert settings.embedding_model().provider == "ollama"
+    assert settings.embedding_model().model == "legacy-embed"
+    assert any(model.provider == "local_hash" for model in settings.configured_models)
+
+
 def test_settings_resolve_context_defaults_and_reject_oversubscribed_output() -> None:
     assert AppSettings(deepseek_model="deepseek-chat").effective_chat_context_window_tokens() == 1_000_000
     assert AppSettings(llm_provider="ollama").effective_chat_context_window_tokens() == 32_768
@@ -234,3 +260,162 @@ def test_provider_requests_apply_configured_context_limits(monkeypatch) -> None:
 
     assert payloads[0]["max_tokens"] == 2_048
     assert payloads[1]["options"] == {"num_ctx": 16_384, "num_predict": 2_048}
+
+
+def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch) -> None:
+    requests: list[tuple[str, dict]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [{"message": {"content": "openrouter chat"}}],
+                "data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}],
+            }
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, **kwargs) -> FakeResponse:
+            requests.append((url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr("lumina.llm.httpx.Client", FakeClient)
+    monkeypatch.setattr("lumina.embedding.httpx.Client", FakeClient)
+    settings = AppSettings(
+        openrouter_api_key="router-key",
+        configured_models=[
+            ConfiguredModel(
+                id="router-chat",
+                name="Router chat",
+                provider="openrouter",
+                capability="chat",
+                model="openai/gpt-4.1-mini",
+            ),
+            ConfiguredModel(
+                id="router-embed",
+                name="Router embed",
+                provider="openrouter",
+                capability="embedding",
+                model="openai/text-embedding-3-small",
+            ),
+        ],
+        chat_model_id="router-chat",
+        embedding_model_id="router-embed",
+        chat_max_output_tokens=1024,
+    )
+
+    assert _call_openrouter(settings, "prompt", settings.chat_model()) == "openrouter chat"
+    vectors = OpenRouterEmbeddingProvider(
+        settings.openrouter_base_url,
+        settings.openrouter_api_key,
+        settings.embedding_model().model,
+    ).embed(["one", "two"])
+
+    assert requests[0][0] == "https://openrouter.ai/api/v1/chat/completions"
+    assert requests[0][1]["headers"]["Authorization"] == "Bearer router-key"
+    assert requests[0][1]["json"]["model"] == "openai/gpt-4.1-mini"
+    assert requests[0][1]["json"]["max_tokens"] == 1024
+    assert requests[1][0] == "https://openrouter.ai/api/v1/embeddings"
+    assert requests[1][1]["json"] == {"model": "openai/text-embedding-3-small", "input": ["one", "two"]}
+    assert vectors == [[0.1, 0.2], [0.3, 0.4]]
+
+
+def test_memory_extraction_uses_chat_assignment_instead_of_embedding_assignment(monkeypatch) -> None:
+    selected_models: list[str] = []
+    settings = AppSettings(
+        openrouter_api_key="router-key",
+        configured_models=[
+            ConfiguredModel(
+                id="router-chat",
+                name="Router chat",
+                provider="openrouter",
+                capability="chat",
+                model="openrouter/chat-model",
+            ),
+            ConfiguredModel(
+                id="router-embed",
+                name="Router embedding",
+                provider="openrouter",
+                capability="embedding",
+                model="openrouter/embedding-model",
+            ),
+        ],
+        chat_model_id="router-chat",
+        embedding_model_id="router-embed",
+    )
+
+    monkeypatch.setattr(
+        "lumina.llm._call_openrouter",
+        lambda current_settings, prompt, model: selected_models.append(model.model) or "[]",
+    )
+
+    assert generate_memory_suggestion_drafts(settings, [{"role": "user", "content": "remember this"}], []) == []
+    assert selected_models == ["openrouter/chat-model"]
+
+
+def test_embedding_signature_marks_changed_binding_stale_and_failed_rebuild_preserves_index(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "signature-vault")
+    create_memory(vault.root, title="Stable index", content="Vector content stays published.", note_type="project")
+    scan_vault(vault.root)
+    local_settings = AppSettings()
+    rebuild_index(vault.root, settings=local_settings)
+    vector_path = vault.root / ".agent" / "vector_index" / "fallback_vectors.json"
+    published_payload = vector_path.read_text(encoding="utf-8")
+
+    remote_settings = AppSettings(
+        openrouter_api_key="key",
+        configured_models=[
+            local_settings.chat_model(),
+            ConfiguredModel(
+                id="remote-embedding",
+                name="Remote embedding",
+                provider="openrouter",
+                capability="embedding",
+                model="provider/embed",
+            ),
+        ],
+        chat_model_id=local_settings.chat_model_id,
+        embedding_model_id="remote-embedding",
+    )
+
+    assert index_status(vault.root, remote_settings)["embedding_index_stale"] is True
+
+    class FailingProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("remote unavailable")
+
+    with pytest.raises(RuntimeError, match="remote unavailable"):
+        rebuild_index(vault.root, embedding_provider=FailingProvider(), settings=remote_settings)
+
+    assert vector_path.read_text(encoding="utf-8") == published_payload
+
+
+def test_remote_query_embedding_failure_falls_back_to_nonsemantic_retrieval(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "query-fallback-vault")
+    create_memory(vault.root, title="Keyword target", content="The project uses aurora indexing.", note_type="project")
+    scan_vault(vault.root)
+    settings = AppSettings()
+    rebuild_index(vault.root, settings=settings)
+
+    class FailingProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("query remote unavailable")
+
+    results = retrieve_memories(
+        vault.root,
+        query="aurora indexing",
+        settings=settings,
+        embedding_provider=FailingProvider(),
+    )
+
+    assert results[0].title == "Keyword target"

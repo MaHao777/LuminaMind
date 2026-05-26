@@ -65,6 +65,7 @@ class IndexSummary(BaseModel):
     indexed_notes: int = 0
     indexed_chunks: int = 0
     vector_store: str = "fallback-json"
+    embedding_index_stale: bool = False
 
 
 class RetrievalRequest(BaseModel):
@@ -87,6 +88,7 @@ class RetrievalResult(BaseModel):
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
     message: str
+    chat_model_id: str | None = None
 
 
 class ConversationCreate(BaseModel):
@@ -147,6 +149,7 @@ class ChatResponse(BaseModel):
 
 class GenerateSuggestionsRequest(BaseModel):
     conversation_id: str | None = None
+    chat_model_id: str | None = None
 
 
 class SelectVaultRequest(BaseModel):

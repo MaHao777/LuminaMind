@@ -117,6 +117,8 @@ export default function App() {
         <ChatPage
           hidden={page !== "chat"}
           vaultPath={settings?.vault_path}
+          chatModels={settings?.configured_models.filter((model) => model.capability === "chat")}
+          defaultChatModelId={settings?.chat_model_id}
           pendingSuggestionCount={pendingSuggestionCount}
           onSuggestionsChanged={refreshPendingSuggestions}
         />
