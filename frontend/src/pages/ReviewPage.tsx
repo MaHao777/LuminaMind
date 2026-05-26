@@ -97,15 +97,40 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
       </aside>
 
       <article className="panel suggestion-detail">
-        {error ? <div className="banner error">{error}</div> : null}
         {selected ? (
           <>
-            <span className={`status-pill ${processingIds.has(selected.id) ? "processing" : selected.status}`}>
-              {processingIds.has(selected.id) || selected.status === "processing"
-                ? "Processing..."
-                : selected.status}
-            </span>
-            <h2>{selected.title}</h2>
+            <div className="suggestion-detail-header">
+              <div className="suggestion-detail-heading">
+                <span className={`status-pill ${processingIds.has(selected.id) ? "processing" : selected.status}`}>
+                  {processingIds.has(selected.id) || selected.status === "processing"
+                    ? "Processing..."
+                    : selected.status}
+                </span>
+                <h2>{selected.title}</h2>
+              </div>
+              <div className="card-actions">
+                <button
+                  type="button"
+                  aria-label={`Accept ${selected.title}`}
+                  onClick={() => processSuggestion(selected.id, acceptSuggestion)}
+                  disabled={processingIds.has(selected.id) || selected.status !== "pending"}
+                >
+                  <Check size={16} aria-hidden />
+                  Accept
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Reject ${selected.title}`}
+                  className="secondary"
+                  onClick={() => processSuggestion(selected.id, rejectSuggestion)}
+                  disabled={processingIds.has(selected.id) || selected.status !== "pending"}
+                >
+                  <X size={16} aria-hidden />
+                  Reject
+                </button>
+              </div>
+            </div>
+            {error ? <div className="banner error">{error}</div> : null}
             <div className="suggestion-meta">
               <span>{selected.type}</span>
               <span>Importance {selected.importance}</span>
@@ -116,30 +141,12 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
             </div>
             <MarkdownContent className="suggestion-content">{selected.content}</MarkdownContent>
             <MarkdownContent className="suggestion-reason">{selected.reason}</MarkdownContent>
-            <div className="card-actions">
-              <button
-                type="button"
-                aria-label={`Accept ${selected.title}`}
-                onClick={() => processSuggestion(selected.id, acceptSuggestion)}
-                disabled={processingIds.has(selected.id) || selected.status !== "pending"}
-              >
-                <Check size={16} aria-hidden />
-                Accept
-              </button>
-              <button
-                type="button"
-                aria-label={`Reject ${selected.title}`}
-                className="secondary"
-                onClick={() => processSuggestion(selected.id, rejectSuggestion)}
-                disabled={processingIds.has(selected.id) || selected.status !== "pending"}
-              >
-                <X size={16} aria-hidden />
-                Reject
-              </button>
-            </div>
           </>
         ) : (
-          <div className="empty-state">Select a suggestion to inspect its details.</div>
+          <>
+            {error ? <div className="banner error">{error}</div> : null}
+            <div className="empty-state">Select a suggestion to inspect its details.</div>
+          </>
         )}
       </article>
     </section>

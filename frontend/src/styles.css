@@ -193,10 +193,6 @@ p {
   min-height: 0;
 }
 
-.memory-grid {
-  grid-template-columns: 320px minmax(400px, 1fr);
-}
-
 .panel {
   min-width: 0;
   border: 1px solid #d1d9e0;
@@ -537,16 +533,30 @@ p {
   overflow: hidden;
 }
 
-.memory-source-list,
-.file-tree {
+.memory-source-list {
   min-height: 0;
   overflow-y: auto;
+}
+
+.file-tree {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .memory-list,
 .suggestion-list {
   display: grid;
+  align-content: start;
   gap: 10px;
+}
+
+.memory-list {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .memory-row {
@@ -864,7 +874,6 @@ pre {
     grid-template-rows: minmax(96px, 0.75fr) minmax(240px, 2fr) minmax(96px, 0.75fr);
   }
 
-  .memory-grid,
   .settings-layout {
     grid-template-columns: 1fr;
   }
@@ -949,6 +958,36 @@ pre {
   --ui-success-border: #bccb99;
   --ui-success-text: #4f6031;
   --ui-badge: #b65340;
+}
+
+.app-shell,
+.app-shell * {
+  scrollbar-color: var(--ui-border-soft) transparent;
+  scrollbar-width: thin;
+}
+
+.app-shell::-webkit-scrollbar,
+.app-shell *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.app-shell::-webkit-scrollbar-track,
+.app-shell *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-shell::-webkit-scrollbar-thumb,
+.app-shell *::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: var(--ui-border-soft);
+  background-clip: padding-box;
+}
+
+.app-shell::-webkit-scrollbar-thumb:hover,
+.app-shell *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ui-muted);
 }
 
 .app-shell .sidebar {
@@ -1184,6 +1223,7 @@ pre {
   gap: 12px;
 }
 
+.memory-grid,
 .review-grid,
 .settings-grid {
   grid-template-columns: 320px minmax(400px, 1fr);
@@ -1196,6 +1236,11 @@ pre {
   gap: 12px;
   min-height: 0;
   overflow: hidden;
+}
+
+.suggestion-browser {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
 }
 
 .review-filters {
@@ -1246,8 +1291,24 @@ pre {
   overflow: auto;
 }
 
-.suggestion-detail h2 {
-  margin: 10px 0;
+.suggestion-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.suggestion-detail-heading {
+  min-width: 0;
+}
+
+.suggestion-detail-heading h2 {
+  margin: 10px 0 0;
+}
+
+.suggestion-detail-header .card-actions {
+  flex: 0 0 auto;
 }
 
 .suggestion-meta {
@@ -1257,10 +1318,6 @@ pre {
   margin-bottom: 12px;
   color: var(--ui-muted);
   font-size: 12px;
-}
-
-.suggestion-detail .card-actions {
-  margin-top: 18px;
 }
 
 .settings-category-list {
@@ -1294,6 +1351,7 @@ pre {
     grid-template-columns: 62px 1fr;
   }
 
+  .memory-grid,
   .review-grid,
   .settings-grid {
     grid-template-columns: 1fr;

@@ -641,6 +641,28 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.getByRole("button", { name: "Accept Accepted record" })).toBeDisabled();
   });
 
+  it("places pending review actions in the detail header before suggestion content", async () => {
+    vi.mocked(api.listSuggestions).mockResolvedValueOnce({
+      suggestions: [{
+        id: "sug_header", conversation_id: "conv_1", action: "create", title: "Header action record",
+        content: "Content below the actions.", type: "project", tags: [], importance: 3,
+        confidence: 0.8, target_note_id: null, reason: "Needs review", status: "pending",
+      }],
+    });
+    const { container } = render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review, 1 pending" }));
+
+    const detail = container.querySelector(".suggestion-detail");
+    const header = detail?.querySelector(".suggestion-detail-header");
+    const content = detail?.querySelector(".suggestion-content");
+    expect(header).not.toBeNull();
+    expect(content).not.toBeNull();
+    expect(header).toContainElement(screen.getByRole("button", { name: "Accept Header action record" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "Reject Header action record" }));
+    expect(header!.compareDocumentPosition(content!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("locks only the suggestion being accepted while processing", async () => {
     let resolveAccept!: (value: Awaited<ReturnType<typeof api.acceptSuggestion>>) => void;
     vi.mocked(api.acceptSuggestion).mockClear();
