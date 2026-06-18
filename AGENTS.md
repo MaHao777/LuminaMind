@@ -104,6 +104,10 @@ cd frontend && npm test -- --run
 2. **不使用 worktree**: 除非用户明确要求，否则不得创建或使用 Git worktree、额外 checkout 目录承载项目改动。
 3. **迁移现有临时改动**: 如果发现待处理改动已位于临时 worktree，先将其迁回本地工作区并验证，再清理临时目录。
 
+### UI 调试规则
+
+1. **滚动条显示**: 调试滚动条外观时，不要把全局样式写死为强制显示或隐藏；必须通过设置页 `Appearance` 中的 `Scrollbars` 开关验证，状态由 `luminamind.ui.showScrollbars` 和 `.app-shell[data-scrollbars]` 控制，关闭时只隐藏滚动条外观，不改变滚动区域的滚动能力。
+
 ### 修改代码后的测试流程
 
 每次修改代码后，按以下步骤操作：

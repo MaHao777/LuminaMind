@@ -935,6 +935,86 @@ pre {
   font-size: 13px;
 }
 
+.switch-setting {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  border: 1px solid #d7dde3;
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.switch-setting-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.switch-setting-copy strong,
+.switch-setting-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switch-setting-copy strong {
+  color: #1d2329;
+}
+
+.switch-setting-copy span {
+  color: #66737f;
+  font-size: 12px;
+}
+
+.switch-setting input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.switch-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  border: 1px solid #c7d0d9;
+  border-radius: 999px;
+  background: #d7dde3;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.switch-track span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(29 35 41 / 18%);
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.switch-setting input:checked + .switch-track {
+  border-color: #202f3f;
+  background: #202f3f;
+}
+
+.switch-setting input:checked + .switch-track span {
+  transform: translateX(18px);
+}
+
+.switch-setting:focus-within {
+  outline: 2px solid #6b8fb2;
+  outline-offset: 2px;
+}
+
 .model-settings-section {
   display: grid;
   gap: 10px;
@@ -1163,34 +1243,46 @@ pre {
   --ui-badge: #b65340;
 }
 
-.app-shell,
-.app-shell * {
+.app-shell[data-scrollbars="visible"],
+.app-shell[data-scrollbars="visible"] * {
   scrollbar-color: var(--ui-border-soft) transparent;
   scrollbar-width: thin;
 }
 
-.app-shell::-webkit-scrollbar,
-.app-shell *::-webkit-scrollbar {
+.app-shell[data-scrollbars="visible"]::-webkit-scrollbar,
+.app-shell[data-scrollbars="visible"] *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-.app-shell::-webkit-scrollbar-track,
-.app-shell *::-webkit-scrollbar-track {
+.app-shell[data-scrollbars="visible"]::-webkit-scrollbar-track,
+.app-shell[data-scrollbars="visible"] *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.app-shell::-webkit-scrollbar-thumb,
-.app-shell *::-webkit-scrollbar-thumb {
+.app-shell[data-scrollbars="visible"]::-webkit-scrollbar-thumb,
+.app-shell[data-scrollbars="visible"] *::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
   background-color: var(--ui-border-soft);
   background-clip: padding-box;
 }
 
-.app-shell::-webkit-scrollbar-thumb:hover,
-.app-shell *::-webkit-scrollbar-thumb:hover {
+.app-shell[data-scrollbars="visible"]::-webkit-scrollbar-thumb:hover,
+.app-shell[data-scrollbars="visible"] *::-webkit-scrollbar-thumb:hover {
   background-color: var(--ui-muted);
+}
+
+.app-shell[data-scrollbars="hidden"],
+.app-shell[data-scrollbars="hidden"] * {
+  scrollbar-width: none;
+}
+
+.app-shell[data-scrollbars="hidden"]::-webkit-scrollbar,
+.app-shell[data-scrollbars="hidden"] *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .app-shell .sidebar {
@@ -1264,7 +1356,8 @@ pre {
 .app-shell .icon-text-button,
 .app-shell .icon-button,
 .app-shell .filter-button,
-.app-shell .settings-category {
+.app-shell .settings-category,
+.app-shell .switch-setting {
   border-color: var(--ui-border);
   background: var(--ui-subtle);
   color: var(--ui-text);
@@ -1319,9 +1412,28 @@ pre {
 .app-shell .suggestion-reason,
 .app-shell .suggestion-row span,
 .app-shell .settings-category span,
+.app-shell .switch-setting-copy span,
 .app-shell .setting-help,
 .app-shell .empty-state {
   color: var(--ui-muted);
+}
+
+.app-shell .switch-setting-copy strong {
+  color: var(--ui-text);
+}
+
+.app-shell .switch-track {
+  border-color: var(--ui-border);
+  background: var(--ui-border-soft);
+}
+
+.app-shell .switch-setting input:checked + .switch-track {
+  border-color: var(--ui-primary);
+  background: var(--ui-primary);
+}
+
+.app-shell .switch-setting:focus-within {
+  outline-color: var(--ui-selected-border);
 }
 
 .app-shell .conversation-row,

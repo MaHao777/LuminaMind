@@ -6,7 +6,15 @@ import { MemoryPage } from "./pages/MemoryPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { getSettings, listSuggestions, type AppSettings, type MemorySuggestion } from "./services/api";
-import { loadSidebarCollapsed, loadTheme, saveSidebarCollapsed, saveTheme, type ThemeId } from "./services/uiPreferences";
+import {
+  loadShowScrollbars,
+  loadSidebarCollapsed,
+  loadTheme,
+  saveShowScrollbars,
+  saveSidebarCollapsed,
+  saveTheme,
+  type ThemeId,
+} from "./services/uiPreferences";
 
 type Page = "chat" | "memory" | "review" | "settings";
 
@@ -24,6 +32,7 @@ export default function App() {
   const [error, setError] = useState<string>("");
   const [theme, setTheme] = useState<ThemeId>(() => loadTheme());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => loadSidebarCollapsed());
+  const [showScrollbars, setShowScrollbars] = useState(() => loadShowScrollbars());
   const pendingSuggestionCount = suggestions.filter((suggestion) => suggestion.status === "pending").length;
 
   useEffect(() => {
@@ -62,8 +71,17 @@ export default function App() {
     });
   }
 
+  function changeShowScrollbars(show: boolean) {
+    setShowScrollbars(show);
+    saveShowScrollbars(show);
+  }
+
   return (
-    <div className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"} data-theme={theme}>
+    <div
+      className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}
+      data-theme={theme}
+      data-scrollbars={showScrollbars ? "visible" : "hidden"}
+    >
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-identity">
@@ -130,8 +148,10 @@ export default function App() {
           <SettingsPage
             settings={settings}
             theme={theme}
+            showScrollbars={showScrollbars}
             onSettingsChange={setSettings}
             onThemeChange={changeTheme}
+            onShowScrollbarsChange={changeShowScrollbars}
           />
         ) : null}
       </main>

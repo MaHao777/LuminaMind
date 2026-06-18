@@ -3,6 +3,7 @@ export type ThemeId = "default" | "dark" | "warm";
 const THEME_KEY = "luminamind.ui.theme";
 const SIDEBAR_COLLAPSED_KEY = "luminamind.ui.sidebarCollapsed";
 const MEMORY_SOURCE_COLLAPSED_KEY = "luminamind.ui.memorySourceCollapsed";
+const SHOW_SCROLLBARS_KEY = "luminamind.ui.showScrollbars";
 
 export function loadTheme(): ThemeId {
   try {
@@ -48,6 +49,22 @@ export function loadMemorySourceCollapsed(): boolean {
 export function saveMemorySourceCollapsed(collapsed: boolean) {
   try {
     window.localStorage.setItem(MEMORY_SOURCE_COLLAPSED_KEY, String(collapsed));
+  } catch {
+    // Ignore storage failures in restricted browser environments.
+  }
+}
+
+export function loadShowScrollbars(): boolean {
+  try {
+    return window.localStorage.getItem(SHOW_SCROLLBARS_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveShowScrollbars(show: boolean) {
+  try {
+    window.localStorage.setItem(SHOW_SCROLLBARS_KEY, String(show));
   } catch {
     // Ignore storage failures in restricted browser environments.
   }

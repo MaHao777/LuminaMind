@@ -202,10 +202,12 @@ describe("LuminaMind MVP frontend", () => {
   it("applies and persists appearance preferences from settings and the app shell", async () => {
     window.localStorage.setItem("luminamind.ui.theme", "warm");
     window.localStorage.setItem("luminamind.ui.sidebarCollapsed", "true");
+    window.localStorage.setItem("luminamind.ui.showScrollbars", "false");
     const { container } = render(<App />);
 
     const shell = container.querySelector(".app-shell");
     expect(shell).toHaveAttribute("data-theme", "warm");
+    expect(shell).toHaveAttribute("data-scrollbars", "hidden");
     expect(shell).toHaveClass("sidebar-collapsed");
     fireEvent.click(screen.getByRole("button", { name: "Expand navigation" }));
     expect(window.localStorage.getItem("luminamind.ui.sidebarCollapsed")).toBe("false");
@@ -213,9 +215,14 @@ describe("LuminaMind MVP frontend", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
     fireEvent.change(screen.getByLabelText("Theme color"), { target: { value: "dark" } });
+    const scrollbarSwitch = screen.getByRole("switch", { name: "Show scrollbars" });
+    expect(scrollbarSwitch).not.toBeChecked();
+    fireEvent.click(scrollbarSwitch);
 
     expect(shell).toHaveAttribute("data-theme", "dark");
+    expect(shell).toHaveAttribute("data-scrollbars", "visible");
     expect(window.localStorage.getItem("luminamind.ui.theme")).toBe("dark");
+    expect(window.localStorage.getItem("luminamind.ui.showScrollbars")).toBe("true");
   });
 
   it("selects a vault through the Electron directory chooser", async () => {

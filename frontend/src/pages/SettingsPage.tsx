@@ -53,8 +53,10 @@ const capabilities: ModelCapability[] = ["chat", "embedding"];
 type Props = {
   settings: AppSettings | null;
   theme: ThemeId;
+  showScrollbars: boolean;
   onSettingsChange: (settings: AppSettings) => void;
   onThemeChange: (theme: ThemeId) => void;
+  onShowScrollbarsChange: (show: boolean) => void;
 };
 
 function embeddingAssignmentSignature(settings: AppSettings | null): string {
@@ -73,7 +75,14 @@ function modelIdForCatalog(capability: ModelCapability, model: string): string {
   return `openrouter-${capability}-${model.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 }
 
-export function SettingsPage({ settings, theme, onSettingsChange, onThemeChange }: Props) {
+export function SettingsPage({
+  settings,
+  theme,
+  showScrollbars,
+  onSettingsChange,
+  onThemeChange,
+  onShowScrollbarsChange,
+}: Props) {
   const [form, setForm] = useState<AppSettings>(settings ?? emptySettings);
   const [section, setSection] = useState<SettingsSection>("vault");
   const [status, setStatus] = useState("");
@@ -456,6 +465,22 @@ export function SettingsPage({ settings, theme, onSettingsChange, onThemeChange 
                 <option value="dark">Dark</option>
                 <option value="warm">Warm yellow</option>
               </select>
+            </label>
+            <label className="switch-setting">
+              <span className="switch-setting-copy">
+                <strong>Scrollbars</strong>
+                <span>{showScrollbars ? "Visible" : "Hidden"}</span>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="Show scrollbars"
+                checked={showScrollbars}
+                onChange={(event) => onShowScrollbarsChange(event.target.checked)}
+              />
+              <span className="switch-track" aria-hidden="true">
+                <span />
+              </span>
             </label>
             <p className="setting-help">Appearance preferences are stored on this device and apply across vaults.</p>
           </div>
