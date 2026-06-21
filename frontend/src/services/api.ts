@@ -9,6 +9,7 @@ export type ConfiguredModel = {
   provider: ModelProvider;
   capability: ModelCapability;
   model: string;
+  api_key: string;
 };
 
 export type ProviderModelCandidate = {
@@ -19,19 +20,12 @@ export type ProviderModelCandidate = {
 export type AppSettings = {
   vault_path: string;
   review_mode: ReviewMode;
-  llm_provider: LlmProvider;
   deepseek_base_url: string;
-  deepseek_model: string;
-  deepseek_api_key: string;
   ollama_base_url: string;
-  ollama_chat_model: string;
-  ollama_embedding_model: string;
   openrouter_base_url: string;
-  openrouter_api_key: string;
   configured_models: ConfiguredModel[];
   chat_model_id: string;
   embedding_model_id: string;
-  embedding_fallback_to_local?: boolean;
   chat_context_window_tokens: number | null;
   chat_max_output_tokens: number;
 };

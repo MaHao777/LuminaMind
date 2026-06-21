@@ -157,13 +157,13 @@ def generate_memory_suggestion_drafts(
     model = settings.chat_model()
     try:
         if model.provider == "deepseek":
-            if not settings.deepseek_api_key:
+            if not model.api_key:
                 return []
             raw = _call_deepseek(settings, prompt)
         elif model.provider == "ollama":
             raw = _call_ollama(settings, prompt)
         elif model.provider == "openrouter":
-            if not settings.openrouter_api_key:
+            if not model.api_key:
                 return []
             raw = _call_openrouter(settings, prompt, model)
         else:
@@ -265,9 +265,9 @@ def generate_answer(
     prompt = build_rag_prompt(user_message, memories, conversation_history)
     model = settings.chat_model()
     if model.provider == "deepseek":
-        if not settings.deepseek_api_key:
+        if not model.api_key:
             raise LLMUnavailableError(
-                "DeepSeek API key is not configured. Configure it in Settings or switch to an available Ollama model."
+                "API key is not configured for the selected DeepSeek model. Configure it in Settings or switch to an available Ollama model."
             )
         try:
             return _call_deepseek(settings, prompt)
@@ -287,9 +287,9 @@ def generate_answer(
             ) from exc
 
     if model.provider == "openrouter":
-        if not settings.openrouter_api_key:
+        if not model.api_key:
             raise LLMUnavailableError(
-                "OpenRouter API key is not configured. Configure it in Settings before using the selected chat model."
+                "API key is not configured for the selected OpenRouter model. Configure it in Settings before using this model."
             )
         try:
             return _call_openrouter(settings, prompt, model)
@@ -307,7 +307,7 @@ def _call_deepseek(settings: AppSettings, prompt: str) -> str:
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+            headers={"Authorization": f"Bearer {model.api_key}"},
             json={
                 "model": model.model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -342,7 +342,7 @@ def _call_openrouter(settings: AppSettings, prompt: str, model: ConfiguredModel)
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            headers={"Authorization": f"Bearer {model.api_key}"},
             json={
                 "model": model.model,
                 "messages": [{"role": "user", "content": prompt}],

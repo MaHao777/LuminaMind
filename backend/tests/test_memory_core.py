@@ -173,50 +173,73 @@ def test_settings_roundtrip_prefers_vault_config(tmp_path: Path) -> None:
     settings = AppSettings.load(vault.root)
     assert settings.review_mode == "manual"
 
-    updated = settings.model_copy(
-        update={
-            "llm_provider": "ollama",
-            "ollama_chat_model": "qwen2.5:7b",
-            "deepseek_api_key": "test-key",
-            "review_mode": "auto",
-        }
-    )
+    updated = settings.model_copy(update={"review_mode": "auto"})
     updated.save(vault.root)
 
     loaded = AppSettings.load(vault.root)
-    assert loaded.llm_provider == "ollama"
-    assert loaded.ollama_chat_model == "qwen2.5:7b"
-    assert loaded.deepseek_api_key == "test-key"
     assert loaded.review_mode == "auto"
 
 
-def test_settings_migrate_legacy_provider_fields_to_named_assignments(tmp_path: Path) -> None:
-    vault = initialize_vault(tmp_path / "legacy-settings-vault")
-    AppSettings.config_path(vault.root).write_text(
-        json.dumps(
-            {
-                "vault_path": str(vault.root),
-                "llm_provider": "ollama",
-                "ollama_chat_model": "legacy-chat",
-                "ollama_embedding_model": "legacy-embed",
-                "embedding_fallback_to_local": True,
-            }
-        ),
-        encoding="utf-8",
+def test_settings_save_writes_model_api_keys_without_legacy_provider_fields(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "model-key-vault")
+    settings = AppSettings(
+        vault_path=str(vault.root),
+        configured_models=[
+            ConfiguredModel(
+                id="deepseek-chat",
+                name="DeepSeek Chat",
+                provider="deepseek",
+                capability="chat",
+                model="deepseek-v4-flash",
+                api_key="deepseek-model-key",
+            ),
+            ConfiguredModel(
+                id="local-embedding",
+                name="Local Hash",
+                provider="local_hash",
+                capability="embedding",
+                model="local-hash-384",
+            ),
+        ],
+        chat_model_id="deepseek-chat",
+        embedding_model_id="local-embedding",
     )
+    settings.save(vault.root)
 
-    settings = AppSettings.load(vault.root)
+    raw = json.loads(AppSettings.config_path(vault.root).read_text(encoding="utf-8"))
+    loaded = AppSettings.load(vault.root)
 
-    assert settings.chat_model().provider == "ollama"
-    assert settings.chat_model().model == "legacy-chat"
-    assert settings.embedding_model().provider == "ollama"
-    assert settings.embedding_model().model == "legacy-embed"
-    assert any(model.provider == "local_hash" for model in settings.configured_models)
+    assert raw["configured_models"][0]["api_key"] == "deepseek-model-key"
+    assert loaded.chat_model().api_key == "deepseek-model-key"
+    assert "deepseek_api_key" not in raw
+    assert "openrouter_api_key" not in raw
+    assert "llm_provider" not in raw
+    assert "ollama_chat_model" not in raw
+    assert "embedding_fallback_to_local" not in raw
 
 
 def test_settings_resolve_context_defaults_and_reject_oversubscribed_output() -> None:
-    assert AppSettings(deepseek_model="deepseek-chat").effective_chat_context_window_tokens() == 1_000_000
-    assert AppSettings(llm_provider="ollama").effective_chat_context_window_tokens() == 32_768
+    assert AppSettings().effective_chat_context_window_tokens() == 1_000_000
+    assert AppSettings(
+        configured_models=[
+            ConfiguredModel(
+                id="ollama-chat",
+                name="Ollama Chat",
+                provider="ollama",
+                capability="chat",
+                model="qwen2.5:7b",
+            ),
+            ConfiguredModel(
+                id="local-embedding",
+                name="Local Hash",
+                provider="local_hash",
+                capability="embedding",
+                model="local-hash-384",
+            ),
+        ],
+        chat_model_id="ollama-chat",
+        embedding_model_id="local-embedding",
+    ).effective_chat_context_window_tokens() == 32_768
     assert (
         AppSettings(chat_context_window_tokens=65_536, chat_max_output_tokens=2_048)
         .effective_chat_context_window_tokens()
@@ -224,7 +247,7 @@ def test_settings_resolve_context_defaults_and_reject_oversubscribed_output() ->
     )
 
     with pytest.raises(ValueError, match="chat_max_output_tokens"):
-        AppSettings(llm_provider="ollama", chat_context_window_tokens=16_384, chat_max_output_tokens=15_360)
+        AppSettings(chat_context_window_tokens=16_384, chat_max_output_tokens=15_360)
 
 
 def test_provider_requests_apply_configured_context_limits(monkeypatch) -> None:
@@ -253,11 +276,55 @@ def test_provider_requests_apply_configured_context_limits(monkeypatch) -> None:
 
     monkeypatch.setattr("lumina.llm.httpx.Client", FakeClient)
 
-    deepseek = AppSettings(deepseek_api_key="key", chat_context_window_tokens=16_384, chat_max_output_tokens=2_048)
-    ollama = AppSettings(llm_provider="ollama", chat_context_window_tokens=16_384, chat_max_output_tokens=2_048)
+    deepseek = AppSettings(
+        configured_models=[
+            ConfiguredModel(
+                id="deepseek-chat",
+                name="DeepSeek Chat",
+                provider="deepseek",
+                capability="chat",
+                model="deepseek-chat",
+                api_key="deepseek-model-key",
+            ),
+            ConfiguredModel(
+                id="local-embedding",
+                name="Local Hash",
+                provider="local_hash",
+                capability="embedding",
+                model="local-hash-384",
+            ),
+        ],
+        chat_model_id="deepseek-chat",
+        embedding_model_id="local-embedding",
+        chat_context_window_tokens=16_384,
+        chat_max_output_tokens=2_048,
+    )
+    ollama = AppSettings(
+        configured_models=[
+            ConfiguredModel(
+                id="ollama-chat",
+                name="Ollama Chat",
+                provider="ollama",
+                capability="chat",
+                model="qwen2.5:7b",
+            ),
+            ConfiguredModel(
+                id="local-embedding",
+                name="Local Hash",
+                provider="local_hash",
+                capability="embedding",
+                model="local-hash-384",
+            ),
+        ],
+        chat_model_id="ollama-chat",
+        embedding_model_id="local-embedding",
+        chat_context_window_tokens=16_384,
+        chat_max_output_tokens=2_048,
+    )
     assert _call_deepseek(deepseek, "prompt") == "deepseek"
     assert _call_ollama(ollama, "prompt") == "ollama"
 
+    assert payloads[0]["model"] == "deepseek-chat"
     assert payloads[0]["max_tokens"] == 2_048
     assert payloads[1]["options"] == {"num_ctx": 16_384, "num_predict": 2_048}
 
@@ -292,7 +359,6 @@ def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch)
     monkeypatch.setattr("lumina.llm.httpx.Client", FakeClient)
     monkeypatch.setattr("lumina.embedding.httpx.Client", FakeClient)
     settings = AppSettings(
-        openrouter_api_key="router-key",
         configured_models=[
             ConfiguredModel(
                 id="router-chat",
@@ -300,6 +366,7 @@ def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch)
                 provider="openrouter",
                 capability="chat",
                 model="openai/gpt-4.1-mini",
+                api_key="router-chat-key",
             ),
             ConfiguredModel(
                 id="router-embed",
@@ -307,6 +374,7 @@ def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch)
                 provider="openrouter",
                 capability="embedding",
                 model="openai/text-embedding-3-small",
+                api_key="router-embed-key",
             ),
         ],
         chat_model_id="router-chat",
@@ -317,15 +385,16 @@ def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch)
     assert _call_openrouter(settings, "prompt", settings.chat_model()) == "openrouter chat"
     vectors = OpenRouterEmbeddingProvider(
         settings.openrouter_base_url,
-        settings.openrouter_api_key,
+        settings.embedding_model().api_key,
         settings.embedding_model().model,
     ).embed(["one", "two"])
 
     assert requests[0][0] == "https://openrouter.ai/api/v1/chat/completions"
-    assert requests[0][1]["headers"]["Authorization"] == "Bearer router-key"
+    assert requests[0][1]["headers"]["Authorization"] == "Bearer router-chat-key"
     assert requests[0][1]["json"]["model"] == "openai/gpt-4.1-mini"
     assert requests[0][1]["json"]["max_tokens"] == 1024
     assert requests[1][0] == "https://openrouter.ai/api/v1/embeddings"
+    assert requests[1][1]["headers"]["Authorization"] == "Bearer router-embed-key"
     assert requests[1][1]["json"] == {"model": "openai/text-embedding-3-small", "input": ["one", "two"]}
     assert vectors == [[0.1, 0.2], [0.3, 0.4]]
 
@@ -333,7 +402,6 @@ def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch)
 def test_memory_extraction_uses_chat_assignment_instead_of_embedding_assignment(monkeypatch) -> None:
     selected_models: list[str] = []
     settings = AppSettings(
-        openrouter_api_key="router-key",
         configured_models=[
             ConfiguredModel(
                 id="router-chat",
@@ -341,6 +409,7 @@ def test_memory_extraction_uses_chat_assignment_instead_of_embedding_assignment(
                 provider="openrouter",
                 capability="chat",
                 model="openrouter/chat-model",
+                api_key="router-chat-key",
             ),
             ConfiguredModel(
                 id="router-embed",
@@ -348,6 +417,7 @@ def test_memory_extraction_uses_chat_assignment_instead_of_embedding_assignment(
                 provider="openrouter",
                 capability="embedding",
                 model="openrouter/embedding-model",
+                api_key="router-embed-key",
             ),
         ],
         chat_model_id="router-chat",
@@ -373,7 +443,6 @@ def test_embedding_signature_marks_changed_binding_stale_and_failed_rebuild_pres
     published_payload = vector_path.read_text(encoding="utf-8")
 
     remote_settings = AppSettings(
-        openrouter_api_key="key",
         configured_models=[
             local_settings.chat_model(),
             ConfiguredModel(
@@ -382,6 +451,7 @@ def test_embedding_signature_marks_changed_binding_stale_and_failed_rebuild_pres
                 provider="openrouter",
                 capability="embedding",
                 model="provider/embed",
+                api_key="remote-key",
             ),
         ],
         chat_model_id=local_settings.chat_model_id,

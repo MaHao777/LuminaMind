@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import * as api from "../services/api";
+
+const stylesCss = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf-8");
 
 const sampleMemory = {
   id: "mem_1",
@@ -24,19 +29,13 @@ const sampleMemory = {
 vi.mock("../services/api", () => ({
   getSettings: vi.fn(async () => ({
     vault_path: "D:/memory",
-    llm_provider: "deepseek",
     deepseek_base_url: "https://api.deepseek.com",
-    deepseek_model: "deepseek-chat",
-    deepseek_api_key: "",
     ollama_base_url: "http://127.0.0.1:11434",
-    ollama_chat_model: "qwen2.5:7b",
-    ollama_embedding_model: "bge-m3",
     openrouter_base_url: "https://openrouter.ai/api/v1",
-    openrouter_api_key: "",
     configured_models: [
-      { id: "deepseek-chat", name: "DeepSeek Chat", provider: "deepseek", capability: "chat", model: "deepseek-chat" },
-      { id: "ollama-chat", name: "Ollama Chat", provider: "ollama", capability: "chat", model: "qwen2.5:7b" },
-      { id: "local-embedding", name: "Local Hash", provider: "local_hash", capability: "embedding", model: "local-hash-384" },
+      { id: "deepseek-chat", name: "DeepSeek Chat", provider: "deepseek", capability: "chat", model: "deepseek-chat", api_key: "" },
+      { id: "ollama-chat", name: "Ollama Chat", provider: "ollama", capability: "chat", model: "qwen2.5:7b", api_key: "" },
+      { id: "local-embedding", name: "Local Hash", provider: "local_hash", capability: "embedding", model: "local-hash-384", api_key: "" },
     ],
     chat_model_id: "deepseek-chat",
     embedding_model_id: "local-embedding",
@@ -154,13 +153,16 @@ describe("LuminaMind MVP frontend", () => {
     Object.defineProperty(window, "luminaDesktop", { configurable: true, value: undefined });
   });
 
-  it("renders settings and saves provider configuration", async () => {
+  it("renders beginner model cards and saves model API keys", async () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(await screen.findByDisplayValue("D:/memory")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
+    expect(screen.getByText("Chat model")).toBeInTheDocument();
+    expect(screen.getByText("Memory search model")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("API key for DeepSeek Chat"), { target: { value: "deepseek-model-key" } });
     fireEvent.change(screen.getByLabelText("Default Chat model"), { target: { value: "ollama-chat" } });
     fireEvent.change(screen.getByLabelText("Chat context window tokens (blank for automatic)"), {
       target: { value: "65536" },
@@ -175,6 +177,9 @@ describe("LuminaMind MVP frontend", () => {
         expect.objectContaining({
           chat_model_id: "ollama-chat",
           embedding_model_id: "local-embedding",
+          configured_models: expect.arrayContaining([
+            expect.objectContaining({ id: "deepseek-chat", api_key: "deepseek-model-key" }),
+          ]),
           chat_context_window_tokens: 65536,
           chat_max_output_tokens: 4096,
           review_mode: "auto",
@@ -188,15 +193,43 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Models" }));
-    fireEvent.change(screen.getByLabelText("OpenRouter API key"), { target: { value: "router-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch OpenRouter embedding models" }));
     await waitFor(() => expect(api.listOpenRouterModels).toHaveBeenCalledWith("embedding"));
     fireEvent.click(await screen.findByRole("button", { name: "Add GPT 4.1 Mini as embedding model" }));
+    fireEvent.change(screen.getByLabelText("API key for DeepSeek Chat"), { target: { value: "deepseek-key" } });
     fireEvent.change(screen.getByLabelText("Embedding model"), { target: { value: "openrouter-embedding-openai-gpt-4-1-mini" } });
+    fireEvent.change(screen.getByLabelText("API key for GPT 4.1 Mini"), { target: { value: "router-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
+    await waitFor(() =>
+      expect(api.saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          configured_models: expect.arrayContaining([
+            expect.objectContaining({ id: "openrouter-embedding-openai-gpt-4-1-mini", api_key: "router-key" }),
+          ]),
+        }),
+      ),
+    );
     await waitFor(() => expect(api.updateIndexDeduped).toHaveBeenCalled());
     expect(await screen.findByText(/Index rebuilt/)).toBeInTheDocument();
+  });
+
+  it("blocks saving a selected cloud model without its model API key", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Models" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    expect(await screen.findByText("API key is required for the selected Chat model.")).toBeInTheDocument();
+    expect(api.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("uses theme variables for model settings cards and advanced controls", () => {
+    expect(stylesCss).toMatch(/\.model-choice-card\s*\{[^}]*background:\s*var\(--ui-subtle\)/s);
+    expect(stylesCss).toMatch(/\.model-choice-header strong\s*\{[^}]*color:\s*var\(--ui-text\)/s);
+    expect(stylesCss).toMatch(/\.model-advanced-section\s*\{[^}]*background:\s*var\(--ui-panel\)/s);
+    expect(stylesCss).toMatch(/\.model-advanced-section summary\s*\{[^}]*color:\s*var\(--ui-text\)/s);
   });
 
   it("applies and persists appearance preferences from settings and the app shell", async () => {

@@ -141,7 +141,25 @@ def test_openrouter_catalog_proxy_uses_capability_specific_endpoints(tmp_path: P
     AppSettings(
         vault_path=str(vault_path),
         openrouter_base_url="https://catalog.example/api/v1",
-        openrouter_api_key="catalog-key",
+        configured_models=[
+            ConfiguredModel(
+                id="router-chat",
+                name="Router Chat",
+                provider="openrouter",
+                capability="chat",
+                model="provider/chat-model",
+                api_key="catalog-key",
+            ),
+            ConfiguredModel(
+                id="local-embedding",
+                name="Local Hash",
+                provider="local_hash",
+                capability="embedding",
+                model="local-hash-384",
+            ),
+        ],
+        chat_model_id="router-chat",
+        embedding_model_id="local-embedding",
     ).save(vault_path)
     requests: list[tuple[str, dict]] = []
 
@@ -209,6 +227,7 @@ def test_chat_reports_stale_embedding_index_without_querying_old_vector_space(tm
                 provider="openrouter",
                 capability="embedding",
                 model="provider/new-embedding",
+                api_key="embedding-key",
             ),
         ],
         chat_model_id=original.chat_model_id,
@@ -254,7 +273,7 @@ def test_rebuild_reports_missing_openrouter_embedding_key_as_configuration_error
     response = client.post("/api/index/rebuild")
 
     assert response.status_code == 400
-    assert "OpenRouter API key" in response.json()["detail"]
+    assert "API key" in response.json()["detail"]
 
 
 def test_chat_model_override_routes_answer_and_memory_generation_through_selected_chat_model(
@@ -445,7 +464,7 @@ def test_chat_rejects_missing_llm_credentials_without_persisting_messages(tmp_pa
     response = client.post("/api/chat", json={"message": "解释一下 Transformer 中的 Attention"})
 
     assert response.status_code == 503
-    assert "DeepSeek API key" in response.json()["detail"]
+    assert "selected DeepSeek model" in response.json()["detail"]
     assert client.get("/api/conversations").json()["conversations"] == []
 
 
@@ -453,7 +472,16 @@ def test_chat_rejects_failed_llm_request_without_persisting_messages(tmp_path: P
     client = TestClient(app)
     vault_path = tmp_path / "failed-provider-vault"
     client.post("/api/vault/select", json={"path": str(vault_path)})
-    AppSettings(vault_path=str(vault_path), deepseek_api_key="test-key").save(vault_path)
+    current = AppSettings.load(vault_path)
+    AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            current.chat_model().model_copy(update={"api_key": "test-key"}),
+            current.embedding_model(),
+        ],
+        chat_model_id=current.chat_model_id,
+        embedding_model_id=current.embedding_model_id,
+    ).save(vault_path)
     monkeypatch.setattr(
         "lumina.llm._call_deepseek",
         lambda settings, prompt: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
@@ -956,9 +984,21 @@ def test_chat_context_budget_drops_only_the_oldest_history(tmp_path: Path, monke
     client = TestClient(app)
     vault_path = tmp_path / "bounded-context-vault"
     client.post("/api/vault/select", json={"path": str(vault_path)})
+    current = AppSettings.load(vault_path)
     AppSettings(
         vault_path=str(vault_path),
-        llm_provider="ollama",
+        configured_models=[
+            ConfiguredModel(
+                id="ollama-chat",
+                name="Ollama Chat",
+                provider="ollama",
+                capability="chat",
+                model="qwen2.5:7b",
+            ),
+            current.embedding_model(),
+        ],
+        chat_model_id="ollama-chat",
+        embedding_model_id=current.embedding_model_id,
         chat_context_window_tokens=16_384,
         chat_max_output_tokens=8_192,
     ).save(vault_path)
@@ -985,9 +1025,21 @@ def test_chat_rejects_fixed_prompt_that_exceeds_context_without_persisting_messa
     client = TestClient(app)
     vault_path = tmp_path / "overflow-context-vault"
     client.post("/api/vault/select", json={"path": str(vault_path)})
+    current = AppSettings.load(vault_path)
     AppSettings(
         vault_path=str(vault_path),
-        llm_provider="ollama",
+        configured_models=[
+            ConfiguredModel(
+                id="ollama-chat",
+                name="Ollama Chat",
+                provider="ollama",
+                capability="chat",
+                model="qwen2.5:7b",
+            ),
+            current.embedding_model(),
+        ],
+        chat_model_id="ollama-chat",
+        embedding_model_id=current.embedding_model_id,
         chat_context_window_tokens=16_384,
         chat_max_output_tokens=8_192,
     ).save(vault_path)

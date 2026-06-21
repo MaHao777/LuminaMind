@@ -69,7 +69,7 @@ class OpenRouterEmbeddingProvider:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
-            raise EmbeddingConfigurationError("OpenRouter API key is required for the selected embedding model.")
+            raise EmbeddingConfigurationError("API key is not configured for the selected embedding model.")
         with httpx.Client(timeout=30.0) as client:
             response = client.post(
                 f"{self.base_url}/embeddings",
@@ -92,7 +92,7 @@ def provider_from_settings(settings: AppSettings | None) -> EmbeddingProvider:
     if model.provider == "openrouter":
         return OpenRouterEmbeddingProvider(
             base_url=settings.openrouter_base_url,
-            api_key=settings.openrouter_api_key,
+            api_key=model.api_key,
             model=model.model,
         )
     raise EmbeddingConfigurationError("The selected provider does not support embeddings.")

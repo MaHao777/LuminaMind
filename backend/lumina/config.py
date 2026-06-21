@@ -27,6 +27,7 @@ class ConfiguredModel(BaseModel):
     provider: Literal["deepseek", "ollama", "openrouter", "local_hash"]
     capability: Literal["chat", "embedding"]
     model: str = Field(min_length=1)
+    api_key: str = ""
 
     @model_validator(mode="after")
     def validate_provider_capability(self) -> "ConfiguredModel":
@@ -41,19 +42,12 @@ class ConfiguredModel(BaseModel):
 class AppSettings(BaseModel):
     vault_path: str = ""
     review_mode: Literal["manual", "auto"] = "manual"
-    llm_provider: str = Field(default="deepseek", pattern="^(deepseek|ollama)$")
     deepseek_base_url: str = DEFAULT_DEEPSEEK_BASE_URL
-    deepseek_model: str = "deepseek-chat"
-    deepseek_api_key: str = ""
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
-    ollama_chat_model: str = "qwen2.5:7b"
-    ollama_embedding_model: str = "bge-m3"
     openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
-    openrouter_api_key: str = ""
     configured_models: list[ConfiguredModel] = Field(default_factory=list)
     chat_model_id: str = ""
     embedding_model_id: str = ""
-    embedding_fallback_to_local: bool = True
     chat_context_window_tokens: int | None = Field(default=None, ge=16_384)
     chat_max_output_tokens: int = Field(default=8_192, ge=1)
 
@@ -66,7 +60,7 @@ class AppSettings(BaseModel):
         return DEFAULT_CHAT_CONTEXT_WINDOW_TOKENS
 
     @model_validator(mode="after")
-    def migrate_models_and_validate_chat_context_budget(self) -> "AppSettings":
+    def populate_models_and_validate_chat_context_budget(self) -> "AppSettings":
         if not self.configured_models:
             self.configured_models = [
                 ConfiguredModel(
@@ -74,21 +68,21 @@ class AppSettings(BaseModel):
                     name="DeepSeek Chat",
                     provider="deepseek",
                     capability="chat",
-                    model=self.deepseek_model,
+                    model="deepseek-chat",
                 ),
                 ConfiguredModel(
                     id="ollama_chat",
                     name="Ollama Chat",
                     provider="ollama",
                     capability="chat",
-                    model=self.ollama_chat_model,
+                    model="qwen2.5:7b",
                 ),
                 ConfiguredModel(
                     id="ollama_embedding",
                     name="Ollama Embedding",
                     provider="ollama",
                     capability="embedding",
-                    model=self.ollama_embedding_model,
+                    model="bge-m3",
                 ),
                 ConfiguredModel(
                     id="local_hash_embedding",
@@ -98,13 +92,8 @@ class AppSettings(BaseModel):
                     model="local-hash-384",
                 ),
             ]
-            self.chat_model_id = "ollama_chat" if self.llm_provider == "ollama" else "deepseek_chat"
-            legacy_embedding_fields = {"ollama_embedding_model", "embedding_fallback_to_local"}
-            self.embedding_model_id = (
-                "ollama_embedding"
-                if self.model_fields_set & legacy_embedding_fields
-                else "local_hash_embedding"
-            )
+            self.chat_model_id = "deepseek_chat"
+            self.embedding_model_id = "local_hash_embedding"
         self.chat_model()
         self.embedding_model()
         context_window = self.effective_chat_context_window_tokens()

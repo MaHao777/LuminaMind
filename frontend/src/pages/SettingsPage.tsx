@@ -19,22 +19,15 @@ import type { ThemeId } from "../services/uiPreferences";
 const emptySettings: AppSettings = {
   vault_path: "",
   review_mode: "manual",
-  llm_provider: "deepseek",
   deepseek_base_url: "https://api.deepseek.com",
-  deepseek_model: "deepseek-chat",
-  deepseek_api_key: "",
   ollama_base_url: "http://127.0.0.1:11434",
-  ollama_chat_model: "qwen2.5:7b",
-  ollama_embedding_model: "bge-m3",
   openrouter_base_url: "https://openrouter.ai/api/v1",
-  openrouter_api_key: "",
   configured_models: [
-    { id: "deepseek_chat", name: "DeepSeek Chat", provider: "deepseek", capability: "chat", model: "deepseek-chat" },
-    { id: "local_hash_embedding", name: "Local Hash", provider: "local_hash", capability: "embedding", model: "local-hash-384" },
+    { id: "deepseek_chat", name: "DeepSeek Chat", provider: "deepseek", capability: "chat", model: "deepseek-chat", api_key: "" },
+    { id: "local_hash_embedding", name: "Local Hash", provider: "local_hash", capability: "embedding", model: "local-hash-384", api_key: "" },
   ],
   chat_model_id: "deepseek_chat",
   embedding_model_id: "local_hash_embedding",
-  embedding_fallback_to_local: true,
   chat_context_window_tokens: null,
   chat_max_output_tokens: 8192,
 };
@@ -49,6 +42,17 @@ const sections: Array<{ id: SettingsSection; label: string; description: string 
 ];
 
 const capabilities: ModelCapability[] = ["chat", "embedding"];
+
+function modelRequiresApiKey(model: ConfiguredModel | undefined): boolean {
+  return model?.provider === "deepseek" || model?.provider === "openrouter";
+}
+
+function providerLabel(provider: ModelProvider): string {
+  if (provider === "local_hash") return "Local Hash";
+  if (provider === "deepseek") return "DeepSeek";
+  if (provider === "openrouter") return "OpenRouter";
+  return "Ollama";
+}
 
 type Props = {
   settings: AppSettings | null;
@@ -140,6 +144,7 @@ export function SettingsPage({
           provider: "openrouter",
           capability,
           model: "",
+          api_key: "",
         },
       ],
     }));
@@ -159,6 +164,7 @@ export function SettingsPage({
             provider: "openrouter",
             capability,
             model: candidate.id,
+            api_key: "",
           },
         ],
       };
@@ -197,11 +203,11 @@ export function SettingsPage({
     if (form.configured_models.some((model) => !model.name.trim() || !model.model.trim())) {
       return "Configured model names and model IDs are required.";
     }
-    if (
-      (chat.provider === "openrouter" || embedding.provider === "openrouter")
-      && !form.openrouter_api_key.trim()
-    ) {
-      return "OpenRouter API key is required for an assigned OpenRouter model.";
+    if (modelRequiresApiKey(chat) && !chat.api_key.trim()) {
+      return "API key is required for the selected Chat model.";
+    }
+    if (modelRequiresApiKey(embedding) && !embedding.api_key.trim()) {
+      return "API key is required for the selected Embedding model.";
     }
     return "";
   }
@@ -266,6 +272,56 @@ export function SettingsPage({
     return capability === "chat" ? ["deepseek", "ollama", "openrouter"] : ["local_hash", "ollama", "openrouter"];
   }
 
+  const chatModels = form.configured_models.filter((model) => model.capability === "chat");
+  const embeddingModels = form.configured_models.filter((model) => model.capability === "embedding");
+  const selectedChat = chatModels.find((model) => model.id === form.chat_model_id);
+  const selectedEmbedding = embeddingModels.find((model) => model.id === form.embedding_model_id);
+
+  function renderAssignedModelCard(model: ConfiguredModel | undefined, title: string) {
+    if (!model) return <div className="banner error">Select a configured {title}.</div>;
+    return (
+      <div className="model-choice-card">
+        <div className="model-choice-header">
+          <div>
+            <span>Selected</span>
+            <strong>{model.name}</strong>
+          </div>
+          <span className="status-pill">{providerLabel(model.provider)}</span>
+        </div>
+        <div className="model-card-fields">
+          <label>
+            Model name
+            <input
+              aria-label={`Name for ${model.name}`}
+              value={model.name}
+              onChange={(event) => updateConfiguredModel(model.id, { name: event.target.value })}
+            />
+          </label>
+          <label>
+            Model ID
+            <input
+              aria-label={`Model ID for ${model.name}`}
+              value={model.model}
+              disabled={model.provider === "local_hash"}
+              onChange={(event) => updateConfiguredModel(model.id, { model: event.target.value })}
+            />
+          </label>
+          {modelRequiresApiKey(model) ? (
+            <label className="model-api-key-field">
+              API key
+              <input
+                type="password"
+                aria-label={`API key for ${model.name}`}
+                value={model.api_key}
+                onChange={(event) => updateConfiguredModel(model.id, { api_key: event.target.value })}
+              />
+            </label>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <section className="page-grid settings-grid">
       <aside className="panel settings-browser">
@@ -318,14 +374,36 @@ export function SettingsPage({
           <div className="form-panel model-settings">
             <h2>Models</h2>
             <section className="model-settings-section">
-              <h3>Provider connections</h3>
+              <h3>Chat model</h3>
+              <label>
+                Default Chat model
+                <select value={form.chat_model_id} onChange={updateText("chat_model_id")}>
+                  {chatModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
+                  ))}
+                </select>
+              </label>
+              {renderAssignedModelCard(selectedChat, "Chat model")}
+            </section>
+
+            <section className="model-settings-section">
+              <h3>Memory search model</h3>
+              <label>
+                Embedding model
+                <select value={form.embedding_model_id} onChange={updateText("embedding_model_id")}>
+                  {embeddingModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
+                  ))}
+                </select>
+              </label>
+              {renderAssignedModelCard(selectedEmbedding, "Memory search model")}
+            </section>
+
+            <details className="model-settings-section model-advanced-section">
+              <summary>Advanced</summary>
               <label>
                 DeepSeek base URL
                 <input value={form.deepseek_base_url} onChange={updateText("deepseek_base_url")} />
-              </label>
-              <label>
-                DeepSeek API key
-                <input type="password" value={form.deepseek_api_key} onChange={updateText("deepseek_api_key")} />
               </label>
               <label>
                 Ollama base URL
@@ -336,17 +414,23 @@ export function SettingsPage({
                 <input value={form.openrouter_base_url} onChange={updateText("openrouter_base_url")} />
               </label>
               <label>
-                OpenRouter API key
-                <input type="password" value={form.openrouter_api_key} onChange={updateText("openrouter_api_key")} />
+                Chat context window tokens (blank for automatic)
+                <input
+                  type="number"
+                  min={16384}
+                  value={form.chat_context_window_tokens ?? ""}
+                  onChange={updateContextWindow}
+                  placeholder="Automatic"
+                />
               </label>
-            </section>
-
-            <section className="model-settings-section">
-              <h3>Configured models</h3>
+              <label>
+                Max response tokens
+                <input type="number" min={1} value={form.chat_max_output_tokens} onChange={updateMaxOutputTokens} />
+              </label>
               {capabilities.map((capability) => (
                 <div className="configured-model-group" key={capability}>
                   <div className="model-group-header">
-                    <strong>{capability === "chat" ? "Chat" : "Embedding"}</strong>
+                    <strong>{capability === "chat" ? "Chat models" : "Embedding models"}</strong>
                     <div className="model-group-actions">
                       <button
                         type="button"
@@ -416,42 +500,7 @@ export function SettingsPage({
                   ))}
                 </div>
               ))}
-            </section>
-
-            <section className="model-settings-section">
-              <h3>Assignments</h3>
-              <label>
-                Default Chat model
-                <select value={form.chat_model_id} onChange={updateText("chat_model_id")}>
-                  {form.configured_models.filter((model) => model.capability === "chat").map((model) => (
-                    <option key={model.id} value={model.id}>{model.name}</option>
-                  ))}
-                </select>
-              </label>
-              <p className="setting-help">The default Chat model preselects the chat composer. Changing it in Chat applies to responses and memory suggestion extraction without changing this default.</p>
-              <label>
-                Embedding model
-                <select value={form.embedding_model_id} onChange={updateText("embedding_model_id")}>
-                  {form.configured_models.filter((model) => model.capability === "embedding").map((model) => (
-                    <option key={model.id} value={model.id}>{model.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Chat context window tokens (blank for automatic)
-                <input
-                  type="number"
-                  min={16384}
-                  value={form.chat_context_window_tokens ?? ""}
-                  onChange={updateContextWindow}
-                  placeholder="Automatic"
-                />
-              </label>
-              <label>
-                Max response tokens
-                <input type="number" min={1} value={form.chat_max_output_tokens} onChange={updateMaxOutputTokens} />
-              </label>
-            </section>
+            </details>
           </div>
         ) : null}
 

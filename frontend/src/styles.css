@@ -1032,6 +1032,71 @@ pre {
   font-size: 15px;
 }
 
+.model-choice-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 7px;
+  padding: 12px;
+  background: var(--ui-subtle);
+  color: var(--ui-text);
+}
+
+.model-choice-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-choice-header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.model-choice-header span:not(.status-pill) {
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+
+.model-choice-header strong {
+  overflow-wrap: anywhere;
+  color: var(--ui-text);
+}
+
+.model-card-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.model-api-key-field {
+  grid-column: 1 / -1;
+}
+
+.model-advanced-section {
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 7px;
+  padding: 10px;
+  background: var(--ui-panel);
+  color: var(--ui-text);
+}
+
+.model-advanced-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ui-text);
+}
+
+.model-advanced-section[open] {
+  gap: 10px;
+}
+
+.model-advanced-section[open] summary {
+  margin-bottom: 2px;
+}
+
 .configured-model-group {
   display: grid;
   gap: 8px;
@@ -1064,6 +1129,13 @@ pre {
 .configured-model-row input,
 .configured-model-row select {
   min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .model-card-fields,
+  .configured-model-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .icon-text-button {

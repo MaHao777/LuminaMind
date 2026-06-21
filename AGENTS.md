@@ -107,6 +107,7 @@ cd frontend && npm test -- --run
 ### UI 调试规则
 
 1. **滚动条显示**: 调试滚动条外观时，不要把全局样式写死为强制显示或隐藏；必须通过设置页 `Appearance` 中的 `Scrollbars` 开关验证，状态由 `luminamind.ui.showScrollbars` 和 `.app-shell[data-scrollbars]` 控制，关闭时只隐藏滚动条外观，不改变滚动区域的滚动能力。
+2. **主题适配**: 每次做出和 UI 相关的调整时，必须同时检查 `default`、`dark`、`warm` 等不同颜色主题下的显示效果；新增或修改的颜色、边框、背景、悬停/聚焦态、错误/成功提示不能只适配单一主题，必要时通过 `.app-shell[data-theme]` 或现有 CSS 变量补齐主题覆盖。
 
 ### 修改代码后的测试流程
 

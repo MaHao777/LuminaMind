@@ -129,6 +129,17 @@ def resolve_chat_settings(settings: AppSettings, chat_model_id: str | None) -> A
         raise HTTPException(status_code=422, detail="Selected chat model is not a configured chat model.") from None
 
 
+def openrouter_catalog_api_key(settings: AppSettings) -> str:
+    return next(
+        (
+            model.api_key
+            for model in settings.configured_models
+            if model.provider == "openrouter" and model.api_key.strip()
+        ),
+        "",
+    )
+
+
 @app.get("/api/settings")
 def get_settings() -> dict:
     settings = AppSettings.load(state.vault_root)
@@ -152,7 +163,8 @@ def post_settings(settings: AppSettings, background_tasks: BackgroundTasks) -> d
 def get_openrouter_models(capability: Literal["chat", "embedding"]) -> dict:
     settings = AppSettings.load(state.vault_root)
     suffix = "/models" if capability == "chat" else "/embeddings/models"
-    headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"} if settings.openrouter_api_key else {}
+    api_key = openrouter_catalog_api_key(settings)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         with httpx.Client(timeout=30.0) as client:
             response = client.get(f"{settings.openrouter_base_url.rstrip('/')}{suffix}", headers=headers)
