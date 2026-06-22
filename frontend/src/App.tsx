@@ -1,15 +1,18 @@
 import { BookOpenText, CheckCheck, MessageSquareText, PanelLeftClose, PanelLeftOpen, Search, Settings, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { I18nProvider, useI18n, type LanguageId } from "./i18n";
 import { ChatPage } from "./pages/ChatPage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { getSettings, listSuggestions, type AppSettings, type MemorySuggestion } from "./services/api";
 import {
+  loadLanguage,
   loadShowScrollbars,
   loadSidebarCollapsed,
   loadTheme,
+  saveLanguage,
   saveShowScrollbars,
   saveSidebarCollapsed,
   saveTheme,
@@ -18,14 +21,35 @@ import {
 
 type Page = "chat" | "memory" | "review" | "settings";
 
-const navItems: Array<{ id: Page; label: string; icon: typeof MessageSquareText }> = [
-  { id: "chat", label: "Chat", icon: MessageSquareText },
-  { id: "memory", label: "Memory", icon: BookOpenText },
-  { id: "review", label: "Review", icon: CheckCheck },
-  { id: "settings", label: "Settings", icon: Settings },
-];
+const navItems = [
+  { id: "chat", labelKey: "nav.chat", icon: MessageSquareText },
+  { id: "memory", labelKey: "nav.memory", icon: BookOpenText },
+  { id: "review", labelKey: "nav.review", icon: CheckCheck },
+  { id: "settings", labelKey: "nav.settings", icon: Settings },
+] as const satisfies Array<{ id: Page; labelKey: "nav.chat" | "nav.memory" | "nav.review" | "nav.settings"; icon: typeof MessageSquareText }>;
 
 export default function App() {
+  const [language, setLanguage] = useState<LanguageId>(() => loadLanguage());
+
+  function changeLanguage(nextLanguage: LanguageId) {
+    setLanguage(nextLanguage);
+    saveLanguage(nextLanguage);
+  }
+
+  return (
+    <I18nProvider language={language}>
+      <AppShell language={language} onLanguageChange={changeLanguage} />
+    </I18nProvider>
+  );
+}
+
+type AppShellProps = {
+  language: LanguageId;
+  onLanguageChange: (language: LanguageId) => void;
+};
+
+function AppShell({ language, onLanguageChange }: AppShellProps) {
+  const { t } = useI18n();
   const [page, setPage] = useState<Page>("chat");
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
@@ -50,9 +74,9 @@ export default function App() {
       const response = await listSuggestions();
       setSuggestions(response.suggestions);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pending reviews");
+      setError(err instanceof Error ? err.message : t("app.pendingReviewsLoadFailed"));
     }
-  }, [settings?.vault_path]);
+  }, [settings?.vault_path, t]);
 
   useEffect(() => {
     void refreshPendingSuggestions();
@@ -81,6 +105,7 @@ export default function App() {
       className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}
       data-theme={theme}
       data-scrollbars={showScrollbars ? "visible" : "hidden"}
+      lang={language === "zh" ? "zh-CN" : "en"}
     >
       <aside className="sidebar">
         <div className="brand">
@@ -88,34 +113,35 @@ export default function App() {
             <Sparkles size={22} aria-hidden />
             <div className="brand-copy">
               <strong>LuminaMind</strong>
-              <span>Local memory agent</span>
+              <span>{t("app.brandSubtitle")}</span>
             </div>
           </div>
           <button
             type="button"
             className="icon-button sidebar-toggle"
-            aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-label={sidebarCollapsed ? t("app.expandNavigation") : t("app.collapseNavigation")}
             onClick={toggleSidebar}
           >
             {sidebarCollapsed ? <PanelLeftOpen size={17} aria-hidden /> : <PanelLeftClose size={17} aria-hidden />}
           </button>
         </div>
 
-        <nav className="nav-list" aria-label="Main">
+        <nav className="nav-list" aria-label={t("app.mainNavigation")}>
           {navItems.map((item) => {
             const Icon = item.icon;
+            const label = t(item.labelKey);
             return (
               <button
                 key={item.id}
                 type="button"
                 aria-label={item.id === "review" && pendingSuggestionCount > 0
-                  ? `Review, ${pendingSuggestionCount} pending`
-                  : item.label}
+                  ? t("app.pendingReviewNav", { count: pendingSuggestionCount })
+                  : label}
                 className={page === item.id ? "nav-item active" : "nav-item"}
                 onClick={() => setPage(item.id)}
               >
                 <Icon size={18} aria-hidden />
-                <span className="nav-label">{item.label}</span>
+                <span className="nav-label">{label}</span>
                 {item.id === "review" && pendingSuggestionCount > 0 ? (
                   <span className="nav-badge" aria-hidden="true">{pendingSuggestionCount}</span>
                 ) : null}
@@ -124,9 +150,9 @@ export default function App() {
           })}
         </nav>
 
-        <div className="sidebar-status" title={settings?.vault_path || "No vault selected"}>
+        <div className="sidebar-status" title={settings?.vault_path || t("app.noVaultSelected")}>
           <Search size={16} aria-hidden />
-          <span>{settings?.vault_path || "No vault selected"}</span>
+          <span>{settings?.vault_path || t("app.noVaultSelected")}</span>
         </div>
       </aside>
 
@@ -147,9 +173,11 @@ export default function App() {
         {page === "settings" ? (
           <SettingsPage
             settings={settings}
+            language={language}
             theme={theme}
             showScrollbars={showScrollbars}
             onSettingsChange={setSettings}
+            onLanguageChange={onLanguageChange}
             onThemeChange={changeTheme}
             onShowScrollbarsChange={changeShowScrollbars}
           />

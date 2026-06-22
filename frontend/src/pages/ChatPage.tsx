@@ -2,6 +2,7 @@ import { Check, ChevronDown, PanelRightClose, PanelRightOpen, Pin, Plus, Search,
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
+import { useI18n } from "../i18n";
 import {
   createConversation,
   deleteConversation,
@@ -84,6 +85,7 @@ export function ChatPage({
   pendingSuggestionCount,
   onSuggestionsChanged,
 }: Props) {
+  const { t } = useI18n();
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationQuery, setConversationQuery] = useState("");
@@ -168,8 +170,8 @@ export function ChatPage({
       })
       .catch((err: unknown) => {
         if (task.vaultPath !== undefined && task.vaultPath !== vaultPathRef.current) return;
-        const detail = err instanceof Error ? err.message : "Unknown error";
-        setPostprocessError(`Memory update failed: ${detail}`);
+        const detail = err instanceof Error ? err.message : t("chat.unknownError");
+        setPostprocessError(t("chat.memoryUpdateFailed", { detail }));
         setRetryPostprocess(task);
       });
   }
@@ -266,7 +268,7 @@ export function ChatPage({
       setUsedMemories(response.used_memories);
     } catch (err) {
       if (revision !== displayRevisionRef.current || activeVaultPath !== vaultPathRef.current) return;
-      setError(err instanceof Error ? err.message : "Failed to load conversation");
+      setError(err instanceof Error ? err.message : t("chat.failedLoadConversation"));
     }
   }
 
@@ -289,14 +291,14 @@ export function ChatPage({
       setMessages([]);
       setUsedMemories([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create conversation");
+      setError(err instanceof Error ? err.message : t("chat.failedCreateConversation"));
     }
   }
 
   async function removeConversation(conversation: ConversationSummary) {
     setConversationMenu(null);
-    const title = conversation.title || "Untitled";
-    if (!window.confirm(`Delete conversation "${title}"?`)) return;
+    const title = conversation.title || t("chat.untitled");
+    if (!window.confirm(t("chat.deleteConversationConfirm", { title }))) return;
     setError("");
     try {
       await deleteConversation(conversation.id);
@@ -315,7 +317,7 @@ export function ChatPage({
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete conversation");
+      setError(err instanceof Error ? err.message : t("chat.failedDeleteConversation"));
     }
   }
 
@@ -328,7 +330,7 @@ export function ChatPage({
         sortConversations(current.map((item) => (item.id === updated.id ? updated : item))),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update conversation");
+      setError(err instanceof Error ? err.message : t("chat.failedUpdateConversation"));
     }
   }
 
@@ -453,14 +455,14 @@ export function ChatPage({
       try {
         await refreshConversations();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to refresh conversations");
+        setError(err instanceof Error ? err.message : t("chat.failedRefreshConversations"));
       }
     } catch (err) {
       if (!isPendingRequest(requestId)) return;
       if (activeVaultPath !== undefined && activeVaultPath !== vaultPathRef.current) return;
       updatePendingChat(null);
       if (conversationIdRef.current === submittedConversationId) {
-        setChatError(err instanceof Error ? err.message : "Chat failed");
+        setChatError(err instanceof Error ? err.message : t("chat.chatFailed"));
       }
     }
   }
@@ -477,16 +479,16 @@ export function ChatPage({
     <section className={memorySourceCollapsed ? "page-grid chat-grid memory-source-collapsed" : "page-grid chat-grid"} hidden={hidden}>
       <div className="panel conversation-list">
         <div className="panel-header">
-          <h1>Chat</h1>
-          <button type="button" className="icon-button" aria-label="New chat" disabled={requestInFlight} onClick={startNewConversation}>
+          <h1>{t("nav.chat")}</h1>
+          <button type="button" className="icon-button" aria-label={t("chat.newChat")} disabled={requestInFlight} onClick={startNewConversation}>
             <Plus size={16} aria-hidden />
           </button>
         </div>
         <label className="search-field">
           <Search size={15} aria-hidden />
           <input
-            aria-label="Search conversations"
-            placeholder="Search chats"
+            aria-label={t("chat.searchConversations")}
+            placeholder={t("chat.searchChatsPlaceholder")}
             value={conversationQuery}
             onChange={(event) => {
               searchEditedRef.current = true;
@@ -498,7 +500,7 @@ export function ChatPage({
             <button
               type="button"
               className="clear-search-button"
-              aria-label="Clear conversation search"
+              aria-label={t("chat.clearConversationSearch")}
               onClick={() => {
                 searchEditedRef.current = true;
                 setError("");
@@ -511,7 +513,7 @@ export function ChatPage({
         </label>
         {conversations.length === 0 ? (
           <div className="empty-state">
-            {conversationQuery.trim() ? "No chats match your search." : "No saved conversations."}
+            {conversationQuery.trim() ? t("chat.noChatsMatchSearch") : t("chat.noSavedConversations")}
           </div>
         ) : (
           <div className="conversation-stack">
@@ -519,21 +521,21 @@ export function ChatPage({
               <div className="conversation-item" key={conversation.id}>
                 <button
                   type="button"
-                  aria-label={conversation.title || "Untitled"}
+                  aria-label={conversation.title || t("chat.untitled")}
                   className={conversation.id === conversationId ? "conversation-row active" : "conversation-row"}
                   onClick={() => loadConversation(conversation.id)}
                   onContextMenu={(event) => handleConversationContextMenu(event, conversation)}
                   onKeyDown={(event) => handleConversationKeyDown(event, conversation)}
                 >
-                  <strong>{conversation.title || "Untitled"}</strong>
+                  <strong>{conversation.title || t("chat.untitled")}</strong>
                   {conversation.pinned ? (
                     <Pin
                       className="conversation-pin"
                       size={14}
-                      aria-label={`Pinned ${conversation.title || "Untitled"}`}
+                      aria-label={t("chat.pinnedConversation", { title: conversation.title || t("chat.untitled") })}
                     />
                   ) : null}
-                  <span>{conversation.message_count} messages</span>
+                  <span>{t("chat.messagesCount", { count: conversation.message_count })}</span>
                 </button>
               </div>
             ))}
@@ -544,49 +546,51 @@ export function ChatPage({
             ref={menuRef}
             role="menu"
             className="conversation-menu"
-            aria-label="Conversation actions"
+            aria-label={t("chat.conversationActions")}
             style={{ left: conversationMenu.left, top: conversationMenu.top }}
           >
             <button
               type="button"
               role="menuitem"
-              aria-label={`${conversationMenu.conversation.pinned ? "Unpin" : "Pin"} ${conversationMenu.conversation.title || "Untitled"}`}
+              aria-label={conversationMenu.conversation.pinned
+                ? t("chat.unpinConversationLabel", { title: conversationMenu.conversation.title || t("chat.untitled") })
+                : t("chat.pinConversationLabel", { title: conversationMenu.conversation.title || t("chat.untitled") })}
               onClick={() => togglePinned(conversationMenu.conversation)}
             >
               <Pin size={15} aria-hidden />
-              {conversationMenu.conversation.pinned ? "Unpin" : "Pin"}
+              {conversationMenu.conversation.pinned ? t("common.unpin") : t("common.pin")}
             </button>
             <button
               type="button"
               role="menuitem"
               className="danger-menu-item"
-              aria-label={`Delete ${conversationMenu.conversation.title || "Untitled"}`}
+              aria-label={t("chat.deleteConversationLabel", { title: conversationMenu.conversation.title || t("chat.untitled") })}
               onClick={() => removeConversation(conversationMenu.conversation)}
             >
               <Trash2 size={15} aria-hidden />
-              Delete
+              {t("common.delete")}
             </button>
           </div>
         ) : null}
       </div>
 
-      <section className="panel chat-panel" aria-label="Agent conversation">
+      <section className="panel chat-panel" aria-label={t("chat.agentConversation")}>
         <div className="messages">
           {messages.length === 0 ? (
-            <div className="empty-state">Start with a question about your long-term memory.</div>
+            <div className="empty-state">{t("chat.startPrompt")}</div>
           ) : (
             messages.map((message, index) => (
               <article key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                <span className="message-author">{message.role === "user" ? "You" : "Agent"}</span>
+                <span className="message-author">{message.role === "user" ? t("chat.userName") : t("chat.agentName")}</span>
                 <MarkdownContent className="message-content">{message.content}</MarkdownContent>
               </article>
             ))
           )}
           {loading ? (
-            <article className="message assistant message-pending" role="status" aria-label="Generating response...">
-              <span className="message-author">Agent</span>
+            <article className="message assistant message-pending" role="status" aria-label={t("chat.generatingAria")}>
+              <span className="message-author">{t("chat.agentName")}</span>
               <p className="typing-status">
-                Generating response
+                {t("chat.generating")}
                 <span className="typing-dots" aria-hidden="true">
                   <span>.</span>
                   <span>.</span>
@@ -597,7 +601,7 @@ export function ChatPage({
           ) : null}
           {chatError ? (
             <article className="message assistant message-error" role="alert">
-              <span className="message-author">Agent</span>
+              <span className="message-author">{t("chat.agentName")}</span>
               <p>{chatError}</p>
             </article>
           ) : null}
@@ -609,15 +613,15 @@ export function ChatPage({
           <div className="banner error postprocess-banner">
             <span>{postprocessError}</span>
             {retryPostprocess ? (
-              <button type="button" className="icon-text-button" aria-label="Retry memory update" onClick={() => enqueuePostprocess(retryPostprocess)}>
-                Retry
+              <button type="button" className="icon-text-button" aria-label={t("chat.retryMemoryUpdate")} onClick={() => enqueuePostprocess(retryPostprocess)}>
+                {t("common.retry")}
               </button>
             ) : null}
           </div>
         ) : null}
         {pendingSuggestionCount > 0 ? (
           <div className="banner success">
-            {pendingSuggestionCount} memory suggestion{pendingSuggestionCount === 1 ? "" : "s"} ready for review.
+            {t(pendingSuggestionCount === 1 ? "chat.memorySuggestionReady" : "chat.memorySuggestionsReady", { count: pendingSuggestionCount })}
           </div>
         ) : null}
 
@@ -626,32 +630,32 @@ export function ChatPage({
             className="composer-input"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="Ask LuminaMind..."
-            aria-label="Chat message"
+            placeholder={t("chat.askPlaceholder")}
+            aria-label={t("chat.messageInput")}
           />
           <div className="composer-footer">
             <div className="composer-model-picker" ref={chatModelMenuRef}>
               <button
                 type="button"
                 className="composer-model-trigger"
-                aria-label="Response model"
+                aria-label={t("chat.responseModel")}
                 aria-haspopup="menu"
                 aria-expanded={chatModelMenuOpen}
                 disabled={chatModels.length === 0}
                 onClick={() => setChatModelMenuOpen((current) => !current)}
               >
-                <span className="composer-model-name">{selectedChatModel?.name ?? "Model"}</span>
+                <span className="composer-model-name">{selectedChatModel?.name ?? t("chat.modelFallback")}</span>
                 <ChevronDown size={13} aria-hidden />
               </button>
               {chatModelMenuOpen ? (
-                <div className="composer-model-menu" role="menu" aria-label="Response models">
+                <div className="composer-model-menu" role="menu" aria-label={t("chat.responseModels")}>
                   {chatModels.map((model) => (
                     <button
                       type="button"
                       key={model.id}
                       role="menuitemradio"
                       aria-checked={model.id === selectedChatModelId}
-                      aria-label={`Use ${model.name}`}
+                      aria-label={t("chat.useModel", { name: model.name })}
                       className={model.id === selectedChatModelId ? "active" : ""}
                       onClick={() => {
                         setChatModelId(model.id);
@@ -665,7 +669,7 @@ export function ChatPage({
                 </div>
               ) : null}
             </div>
-            <button className="composer-send" type="submit" aria-label="Send" disabled={requestInFlight || !input.trim()}>
+            <button className="composer-send" type="submit" aria-label={t("chat.send")} disabled={requestInFlight || !input.trim()}>
               <Send size={16} aria-hidden />
             </button>
           </div>
@@ -674,11 +678,11 @@ export function ChatPage({
 
       <aside className="panel memory-source-panel">
         <div className="memory-source-header">
-          <h2>Used memories</h2>
+          <h2>{t("chat.usedMemories")}</h2>
           <button
             type="button"
             className="icon-button memory-source-toggle"
-            aria-label={memorySourceCollapsed ? "Expand used memories" : "Collapse used memories"}
+            aria-label={memorySourceCollapsed ? t("chat.expandUsedMemories") : t("chat.collapseUsedMemories")}
             onClick={toggleMemorySourcePanel}
           >
             {memorySourceCollapsed
@@ -688,7 +692,7 @@ export function ChatPage({
         </div>
         <div className="memory-source-list">
           {usedMemories.length === 0 ? (
-            <div className="empty-state">No memories used yet.</div>
+            <div className="empty-state">{t("chat.noMemoriesUsed")}</div>
           ) : (
             usedMemories.map((memory) => (
               <article className="source-row" key={memory.memory_id}>

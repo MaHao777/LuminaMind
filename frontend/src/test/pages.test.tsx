@@ -258,6 +258,48 @@ describe("LuminaMind MVP frontend", () => {
     expect(window.localStorage.getItem("luminamind.ui.showScrollbars")).toBe("true");
   });
 
+  it("switches the interface language from appearance settings without a reload", async () => {
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Project planning" });
+    await screen.findByRole("button", { name: "Review, 1 pending" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh" } });
+    });
+
+    expect(screen.getByRole("button", { name: "聊天" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "记忆" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "审查" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("luminamind.ui.language")).toBe("zh");
+
+    fireEvent.click(screen.getByRole("button", { name: "聊天" }));
+    expect(screen.getByPlaceholderText("询问 LuminaMind...")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("语言"), { target: { value: "en" } });
+    });
+
+    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Memory" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("luminamind.ui.language")).toBe("en");
+  });
+
+  it("keeps API-provided content unchanged when the interface is Chinese", async () => {
+    window.localStorage.setItem("luminamind.ui.language", "zh");
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "记忆" }));
+
+    expect(await screen.findAllByText(sampleMemory.title)).toHaveLength(2);
+    expect(screen.getByText(sampleMemory.content)).toBeInTheDocument();
+    expect(screen.getByText("D:/memory")).toBeInTheDocument();
+  });
+
   it("selects a vault through the Electron directory chooser", async () => {
     const chooseVaultDirectory = vi.fn(async () => "D:/picked-vault");
     Object.defineProperty(window, "luminaDesktop", {

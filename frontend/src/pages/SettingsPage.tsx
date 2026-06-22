@@ -1,6 +1,7 @@
 import { FolderOpen, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 
+import { useI18n, type LanguageId } from "../i18n";
 import {
   listOpenRouterModels,
   rebuildIndex,
@@ -34,13 +35,6 @@ const emptySettings: AppSettings = {
 
 type SettingsSection = "vault" | "review" | "models" | "appearance";
 
-const sections: Array<{ id: SettingsSection; label: string; description: string }> = [
-  { id: "vault", label: "Vault", description: "Workspace storage and indexing" },
-  { id: "review", label: "Review", description: "Memory approval behavior" },
-  { id: "models", label: "Models", description: "Chat and embedding providers" },
-  { id: "appearance", label: "Appearance", description: "Theme and interface colors" },
-];
-
 const capabilities: ModelCapability[] = ["chat", "embedding"];
 
 function modelRequiresApiKey(model: ConfiguredModel | undefined): boolean {
@@ -56,9 +50,11 @@ function providerLabel(provider: ModelProvider): string {
 
 type Props = {
   settings: AppSettings | null;
+  language: LanguageId;
   theme: ThemeId;
   showScrollbars: boolean;
   onSettingsChange: (settings: AppSettings) => void;
+  onLanguageChange: (language: LanguageId) => void;
   onThemeChange: (theme: ThemeId) => void;
   onShowScrollbarsChange: (show: boolean) => void;
 };
@@ -81,12 +77,15 @@ function modelIdForCatalog(capability: ModelCapability, model: string): string {
 
 export function SettingsPage({
   settings,
+  language,
   theme,
   showScrollbars,
   onSettingsChange,
+  onLanguageChange,
   onThemeChange,
   onShowScrollbarsChange,
 }: Props) {
+  const { t } = useI18n();
   const [form, setForm] = useState<AppSettings>(settings ?? emptySettings);
   const [section, setSection] = useState<SettingsSection>("vault");
   const [status, setStatus] = useState("");
@@ -98,6 +97,12 @@ export function SettingsPage({
   });
   const [catalogLoading, setCatalogLoading] = useState<ModelCapability | null>(null);
   const manualIdRef = useRef(0);
+  const sections: Array<{ id: SettingsSection; label: string; description: string }> = [
+    { id: "vault", label: t("settings.vault"), description: t("settings.vaultDescription") },
+    { id: "review", label: t("settings.review"), description: t("settings.reviewDescription") },
+    { id: "models", label: t("settings.models"), description: t("settings.modelsDescription") },
+    { id: "appearance", label: t("settings.appearance"), description: t("settings.appearanceDescription") },
+  ];
 
   useEffect(() => {
     if (settings) setForm(settings);
@@ -173,7 +178,7 @@ export function SettingsPage({
 
   function deleteConfiguredModel(model: ConfiguredModel) {
     if (model.id === form.chat_model_id || model.id === form.embedding_model_id) {
-      setError("Change the assigned model before deleting it.");
+      setError(t("settings.deleteAssignedModel"));
       return;
     }
     setForm((current) => ({
@@ -189,7 +194,7 @@ export function SettingsPage({
       const response = await listOpenRouterModels(capability);
       setCatalogs((current) => ({ ...current, [capability]: response.models }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load OpenRouter models");
+      setError(err instanceof Error ? err.message : t("settings.failedLoadOpenRouter"));
     } finally {
       setCatalogLoading(null);
     }
@@ -198,29 +203,31 @@ export function SettingsPage({
   function validateAssignments(): string {
     const chat = form.configured_models.find((model) => model.id === form.chat_model_id);
     const embedding = form.configured_models.find((model) => model.id === form.embedding_model_id);
-    if (!chat || chat.capability !== "chat") return "Select a configured Chat model.";
-    if (!embedding || embedding.capability !== "embedding") return "Select a configured Embedding model.";
+    if (!chat || chat.capability !== "chat") return t("settings.selectConfiguredChat");
+    if (!embedding || embedding.capability !== "embedding") return t("settings.selectConfiguredEmbedding");
     if (form.configured_models.some((model) => !model.name.trim() || !model.model.trim())) {
-      return "Configured model names and model IDs are required.";
+      return t("settings.modelIdRequired");
     }
     if (modelRequiresApiKey(chat) && !chat.api_key.trim()) {
-      return "API key is required for the selected Chat model.";
+      return t("settings.apiKeyRequiredChat");
     }
     if (modelRequiresApiKey(embedding) && !embedding.api_key.trim()) {
-      return "API key is required for the selected Embedding model.";
+      return t("settings.apiKeyRequiredEmbedding");
     }
     return "";
   }
 
   async function refreshIndexAfterSave() {
     setRetryIndexRefresh(false);
-    setStatus("Settings saved. Rebuilding index...");
+    setStatus(t("settings.settingsSavedRebuilding"));
     try {
       const index = await updateIndexDeduped();
-      setStatus(`Settings saved. Index rebuilt: ${index.indexed_chunks} chunks.`);
+      setStatus(t("settings.settingsSavedIndexRebuilt", { chunks: index.indexed_chunks }));
     } catch (err) {
       setRetryIndexRefresh(true);
-      setError(err instanceof Error ? `Index rebuild failed: ${err.message}` : "Index rebuild failed.");
+      setError(err instanceof Error
+        ? t("settings.indexRebuildFailed", { message: err.message })
+        : t("settings.indexRebuildFailedGeneric"));
     }
   }
 
@@ -239,10 +246,10 @@ export function SettingsPage({
       if (saved.vault_path && previousEmbedding !== embeddingAssignmentSignature(saved)) {
         void refreshIndexAfterSave();
       } else {
-        setStatus("Settings saved");
+        setStatus(t("settings.settingsSaved"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save settings");
+      setError(err instanceof Error ? err.message : t("settings.failedSave"));
     }
   }
 
@@ -250,7 +257,7 @@ export function SettingsPage({
     setError("");
     const chooseVaultDirectory = window.luminaDesktop?.chooseVaultDirectory;
     if (!chooseVaultDirectory) {
-      setError("Vault folder selection is available in the desktop app only.");
+      setError(t("settings.vaultDesktopOnly"));
       return;
     }
     try {
@@ -261,10 +268,14 @@ export function SettingsPage({
       const index = await rebuildIndex();
       const nextForm = { ...form, vault_path: selected.path };
       setForm(nextForm);
-      setStatus(`Vault ${selected.path} ready. ${scan.indexed_notes} notes, ${index.indexed_chunks} chunks.`);
+      setStatus(t("settings.vaultReady", {
+        path: selected.path,
+        notes: scan.indexed_notes,
+        chunks: index.indexed_chunks,
+      }));
       onSettingsChange(nextForm);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to initialize vault");
+      setError(err instanceof Error ? err.message : t("settings.failedInitializeVault"));
     }
   }
 
@@ -278,29 +289,29 @@ export function SettingsPage({
   const selectedEmbedding = embeddingModels.find((model) => model.id === form.embedding_model_id);
 
   function renderAssignedModelCard(model: ConfiguredModel | undefined, title: string) {
-    if (!model) return <div className="banner error">Select a configured {title}.</div>;
+    if (!model) return <div className="banner error">{t("settings.selectConfiguredTitle", { title })}</div>;
     return (
       <div className="model-choice-card">
         <div className="model-choice-header">
           <div>
-            <span>Selected</span>
+            <span>{t("common.selected")}</span>
             <strong>{model.name}</strong>
           </div>
           <span className="status-pill">{providerLabel(model.provider)}</span>
         </div>
         <div className="model-card-fields">
           <label>
-            Model name
+            {t("settings.modelName")}
             <input
-              aria-label={`Name for ${model.name}`}
+              aria-label={t("settings.modelNameFor", { name: model.name })}
               value={model.name}
               onChange={(event) => updateConfiguredModel(model.id, { name: event.target.value })}
             />
           </label>
           <label>
-            Model ID
+            {t("settings.modelId")}
             <input
-              aria-label={`Model ID for ${model.name}`}
+              aria-label={t("settings.modelIdFor", { name: model.name })}
               value={model.model}
               disabled={model.provider === "local_hash"}
               onChange={(event) => updateConfiguredModel(model.id, { model: event.target.value })}
@@ -308,10 +319,10 @@ export function SettingsPage({
           </label>
           {modelRequiresApiKey(model) ? (
             <label className="model-api-key-field">
-              API key
+              {t("settings.apiKey")}
               <input
                 type="password"
-                aria-label={`API key for ${model.name}`}
+                aria-label={t("settings.apiKeyFor", { name: model.name })}
                 value={model.api_key}
                 onChange={(event) => updateConfiguredModel(model.id, { api_key: event.target.value })}
               />
@@ -325,8 +336,8 @@ export function SettingsPage({
   return (
     <section className="page-grid settings-grid">
       <aside className="panel settings-browser">
-        <h1>Settings</h1>
-        <div className="settings-category-list" aria-label="Settings categories">
+        <h1>{t("nav.settings")}</h1>
+        <div className="settings-category-list" aria-label={t("settings.settingsCategories")}>
           {sections.map((item) => (
             <button
               type="button"
@@ -345,26 +356,26 @@ export function SettingsPage({
       <article className="panel settings-detail">
         {section === "vault" ? (
           <div className="form-panel">
-            <h2>Vault</h2>
+            <h2>{t("settings.vault")}</h2>
             <label>
-              Vault path
-              <input value={form.vault_path} readOnly placeholder="No vault selected" />
+              {t("settings.vaultPath")}
+              <input value={form.vault_path} readOnly placeholder={t("settings.noVaultSelected")} />
             </label>
             <button type="button" className="icon-text-button" onClick={initializeVault}>
               <FolderOpen size={16} aria-hidden />
-              Select vault
+              {t("settings.selectVault")}
             </button>
           </div>
         ) : null}
 
         {section === "review" ? (
           <div className="form-panel">
-            <h2>Review</h2>
+            <h2>{t("settings.review")}</h2>
             <label>
-              Review behavior
+              {t("settings.reviewBehavior")}
               <select value={form.review_mode} onChange={updateText("review_mode")}>
-                <option value="manual">Manual acceptance</option>
-                <option value="auto">Automatic acceptance</option>
+                <option value="manual">{t("settings.manualAcceptance")}</option>
+                <option value="auto">{t("settings.automaticAcceptance")}</option>
               </select>
             </label>
           </div>
@@ -372,49 +383,49 @@ export function SettingsPage({
 
         {section === "models" ? (
           <div className="form-panel model-settings">
-            <h2>Models</h2>
+            <h2>{t("settings.models")}</h2>
             <section className="model-settings-section">
-              <h3>Chat model</h3>
+              <h3>{t("settings.chatModel")}</h3>
               <label>
-                Default Chat model
+                {t("settings.defaultChatModel")}
                 <select value={form.chat_model_id} onChange={updateText("chat_model_id")}>
                   {chatModels.map((model) => (
                     <option key={model.id} value={model.id}>{model.name}</option>
                   ))}
                 </select>
               </label>
-              {renderAssignedModelCard(selectedChat, "Chat model")}
+              {renderAssignedModelCard(selectedChat, t("settings.chatModel"))}
             </section>
 
             <section className="model-settings-section">
-              <h3>Memory search model</h3>
+              <h3>{t("settings.memorySearchModel")}</h3>
               <label>
-                Embedding model
+                {t("settings.embeddingModel")}
                 <select value={form.embedding_model_id} onChange={updateText("embedding_model_id")}>
                   {embeddingModels.map((model) => (
                     <option key={model.id} value={model.id}>{model.name}</option>
                   ))}
                 </select>
               </label>
-              {renderAssignedModelCard(selectedEmbedding, "Memory search model")}
+              {renderAssignedModelCard(selectedEmbedding, t("settings.memorySearchModel"))}
             </section>
 
             <details className="model-settings-section model-advanced-section">
-              <summary>Advanced</summary>
+              <summary>{t("settings.advanced")}</summary>
               <label>
-                DeepSeek base URL
+                {t("settings.deepSeekBaseUrl")}
                 <input value={form.deepseek_base_url} onChange={updateText("deepseek_base_url")} />
               </label>
               <label>
-                Ollama base URL
+                {t("settings.ollamaBaseUrl")}
                 <input value={form.ollama_base_url} onChange={updateText("ollama_base_url")} />
               </label>
               <label>
-                OpenRouter base URL
+                {t("settings.openRouterBaseUrl")}
                 <input value={form.openrouter_base_url} onChange={updateText("openrouter_base_url")} />
               </label>
               <label>
-                Chat context window tokens (blank for automatic)
+                {t("settings.chatContextWindow")}
                 <input
                   type="number"
                   min={16384}
@@ -424,32 +435,32 @@ export function SettingsPage({
                 />
               </label>
               <label>
-                Max response tokens
+                {t("settings.maxResponseTokens")}
                 <input type="number" min={1} value={form.chat_max_output_tokens} onChange={updateMaxOutputTokens} />
               </label>
               {capabilities.map((capability) => (
                 <div className="configured-model-group" key={capability}>
                   <div className="model-group-header">
-                    <strong>{capability === "chat" ? "Chat models" : "Embedding models"}</strong>
+                    <strong>{capability === "chat" ? t("settings.chatModels") : t("settings.embeddingModels")}</strong>
                     <div className="model-group-actions">
                       <button
                         type="button"
                         className="icon-text-button"
-                        aria-label={`Fetch OpenRouter ${capability} models`}
+                        aria-label={t("settings.fetchOpenRouterModels", { capability })}
                         onClick={() => void fetchCatalog(capability)}
                         disabled={catalogLoading === capability}
                       >
                         <RefreshCw size={14} aria-hidden />
-                        From catalog
+                        {t("settings.catalog")}
                       </button>
                       <button
                         type="button"
                         className="icon-text-button"
-                        aria-label={`Add manual ${capability} model`}
+                        aria-label={t("settings.addManualModel", { capability })}
                         onClick={() => addManualModel(capability)}
                       >
                         <Plus size={14} aria-hidden />
-                        Manual
+                        {t("settings.manual")}
                       </button>
                     </div>
                   </div>
@@ -458,7 +469,7 @@ export function SettingsPage({
                       type="button"
                       className="model-catalog-candidate"
                       key={candidate.id}
-                      aria-label={`Add ${candidate.name} as ${capability} model`}
+                      aria-label={t("settings.addCatalogModel", { name: candidate.name, capability })}
                       onClick={() => addCatalogModel(capability, candidate)}
                     >
                       <Plus size={14} aria-hidden />
@@ -468,7 +479,7 @@ export function SettingsPage({
                   {form.configured_models.filter((model) => model.capability === capability).map((model) => (
                     <div className="configured-model-row" key={model.id}>
                       <input
-                        aria-label={`Name for ${model.id}`}
+                        aria-label={t("settings.modelNameForId", { id: model.id })}
                         value={model.name}
                         onChange={(event) => updateConfiguredModel(model.id, { name: event.target.value })}
                       />
@@ -490,7 +501,7 @@ export function SettingsPage({
                       <button
                         type="button"
                         className="icon-button danger-button"
-                        aria-label={`Delete model ${model.name}`}
+                        aria-label={t("settings.deleteModel", { name: model.name })}
                         disabled={model.id === form.chat_model_id || model.id === form.embedding_model_id}
                         onClick={() => deleteConfiguredModel(model)}
                       >
@@ -506,24 +517,31 @@ export function SettingsPage({
 
         {section === "appearance" ? (
           <div className="form-panel">
-            <h2>Appearance</h2>
+            <h2>{t("settings.appearance")}</h2>
             <label>
-              Theme color
+              {t("settings.language")}
+              <select value={language} onChange={(event) => onLanguageChange(event.target.value as LanguageId)}>
+                <option value="en">{t("settings.languageEnglish")}</option>
+                <option value="zh">{t("settings.languageChinese")}</option>
+              </select>
+            </label>
+            <label>
+              {t("settings.themeColor")}
               <select value={theme} onChange={(event) => onThemeChange(event.target.value as ThemeId)}>
-                <option value="default">Default light</option>
-                <option value="dark">Dark</option>
-                <option value="warm">Warm yellow</option>
+                <option value="default">{t("settings.themeDefault")}</option>
+                <option value="dark">{t("settings.themeDark")}</option>
+                <option value="warm">{t("settings.themeWarm")}</option>
               </select>
             </label>
             <label className="switch-setting">
               <span className="switch-setting-copy">
-                <strong>Scrollbars</strong>
-                <span>{showScrollbars ? "Visible" : "Hidden"}</span>
+                <strong>{t("settings.scrollbars")}</strong>
+                <span>{showScrollbars ? t("common.visible") : t("common.hidden")}</span>
               </span>
               <input
                 type="checkbox"
                 role="switch"
-                aria-label="Show scrollbars"
+                aria-label={t("settings.showScrollbars")}
                 checked={showScrollbars}
                 onChange={(event) => onShowScrollbarsChange(event.target.checked)}
               />
@@ -531,19 +549,19 @@ export function SettingsPage({
                 <span />
               </span>
             </label>
-            <p className="setting-help">Appearance preferences are stored on this device and apply across vaults.</p>
+            <p className="setting-help">{t("settings.appearanceStored")}</p>
           </div>
         ) : null}
 
         <div className="settings-footer">
           <button type="button" onClick={save}>
             <Save size={16} aria-hidden />
-            Save settings
+            {t("settings.saveSettings")}
           </button>
           {retryIndexRefresh ? (
             <button type="button" className="icon-text-button" onClick={() => void refreshIndexAfterSave()}>
               <RefreshCw size={16} aria-hidden />
-              Retry index rebuild
+              {t("settings.retryIndexRebuild")}
             </button>
           ) : null}
           {status ? <div className="banner success">{status}</div> : null}

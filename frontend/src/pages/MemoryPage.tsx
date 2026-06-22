@@ -7,8 +7,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { MarkdownContent } from "../components/MarkdownContent";
 
+import { MarkdownContent } from "../components/MarkdownContent";
+import { useI18n } from "../i18n";
 import { deleteMemory, listMemories, rebuildIndex, scanVault, updateMemoryPin, type MemoryNote } from "../services/api";
 
 type MemoryTypeFilter = "all" | "profile" | "project" | "concept" | "task" | "log";
@@ -28,6 +29,7 @@ function sortMemories(memories: MemoryNote[]) {
 }
 
 export function MemoryPage() {
+  const { t } = useI18n();
   const [memories, setMemories] = useState<MemoryNote[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [query, setQuery] = useState("");
@@ -44,7 +46,7 @@ export function MemoryPage() {
       setMemories(sortMemories(response.memories));
       setSelectedId((current) => current || response.memories[0]?.id || "");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load memories");
+      setError(err instanceof Error ? err.message : t("memory.failedLoad"));
     }
   }
 
@@ -100,7 +102,7 @@ export function MemoryPage() {
   async function removeMemory(memory: MemoryNote) {
     if (deleting) return;
     setMemoryMenu(null);
-    if (!window.confirm(`Delete memory "${memory.title}"?`)) return;
+    if (!window.confirm(t("memory.deleteConfirm", { title: memory.title }))) return;
     setDeleting(true);
     setError("");
     try {
@@ -109,9 +111,9 @@ export function MemoryPage() {
       const remaining = sortMemories(response.memories);
       setMemories(remaining);
       if (selectedId === memory.id) setSelectedId(remaining[0]?.id || "");
-      setStatus("Memory deleted.");
+      setStatus(t("memory.deleted"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete memory");
+      setError(err instanceof Error ? err.message : t("memory.failedDelete"));
     } finally {
       setDeleting(false);
     }
@@ -126,7 +128,7 @@ export function MemoryPage() {
         sortMemories(current.map((item) => (item.id === updated.id ? updated : item))),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update memory");
+      setError(err instanceof Error ? err.message : t("memory.failedUpdate"));
     }
   }
 
@@ -155,7 +157,7 @@ export function MemoryPage() {
     setError("");
     const scan = await scanVault();
     const index = await rebuildIndex();
-    setStatus(`Scanned ${scan.indexed_notes} notes, indexed ${index.indexed_chunks} chunks`);
+    setStatus(t("memory.scanStatus", { notes: scan.indexed_notes, chunks: index.indexed_chunks }));
     await load();
   }
 
@@ -163,43 +165,43 @@ export function MemoryPage() {
     <section className="page-grid memory-grid">
       <aside className="panel file-tree">
         <div className="panel-header">
-          <h1>Memory</h1>
+          <h1>{t("nav.memory")}</h1>
           <button type="button" className="icon-text-button" onClick={refreshVault}>
             <RefreshCw size={16} aria-hidden />
-            Reindex
+            {t("memory.reindex")}
           </button>
         </div>
         <div className="memory-toolbar">
           <label className="search-field">
             <Search size={15} aria-hidden />
             <input
-              aria-label="Search memories"
-              placeholder="Search memories"
+              aria-label={t("memory.search")}
+              placeholder={t("memory.search")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
           <select
-            aria-label="Filter memories by type"
+            aria-label={t("memory.filterByType")}
             value={typeFilter}
             onChange={(event) => setTypeFilter(event.target.value as MemoryTypeFilter)}
           >
-            <option value="all">All types</option>
-            <option value="profile">profile</option>
-            <option value="project">project</option>
-            <option value="concept">concept</option>
-            <option value="task">task</option>
-            <option value="log">log</option>
+            <option value="all">{t("memory.allTypes")}</option>
+            <option value="profile">{t("memory.profile")}</option>
+            <option value="project">{t("memory.project")}</option>
+            <option value="concept">{t("memory.concept")}</option>
+            <option value="task">{t("memory.task")}</option>
+            <option value="log">{t("memory.log")}</option>
           </select>
         </div>
 
         {filteredMemories.length === 0 ? (
           <div className="empty-state">
             {typeFilter !== "all" && memories.length > 0
-              ? "No memories match your filters."
+              ? t("memory.noMatchFilters")
               : query.trim() && memories.length > 0
-                ? "No memories match your search."
-                : "No Markdown memories loaded."}
+                ? t("memory.noMatchSearch")
+                : t("memory.noMarkdownLoaded")}
           </div>
         ) : (
           <div className="memory-list">
@@ -214,8 +216,10 @@ export function MemoryPage() {
                 onKeyDown={(event) => handleMemoryKeyDown(event, memory)}
               >
                 <strong>{memory.title}</strong>
-                {memory.pinned ? <Pin className="memory-pin" size={14} aria-label={`Pinned ${memory.title}`} /> : null}
-                <span>{memory.type} · {memory.tags.join(", ") || "untagged"}</span>
+                {memory.pinned ? (
+                  <Pin className="memory-pin" size={14} aria-label={t("memory.pinnedLabel", { title: memory.title })} />
+                ) : null}
+                <span>{t("memory.pathTags", { type: memory.type, tags: memory.tags.join(", ") || t("common.untagged") })}</span>
               </button>
             ))}
           </div>
@@ -225,28 +229,30 @@ export function MemoryPage() {
             ref={menuRef}
             role="menu"
             className="conversation-menu"
-            aria-label="Memory actions"
+            aria-label={t("memory.actions")}
             style={{ left: memoryMenu.left, top: memoryMenu.top }}
           >
             <button
               type="button"
               role="menuitem"
-              aria-label={`${memoryMenu.memory.pinned ? "Unpin" : "Pin"} ${memoryMenu.memory.title}`}
+              aria-label={memoryMenu.memory.pinned
+                ? t("memory.unpinLabel", { title: memoryMenu.memory.title })
+                : t("memory.pinLabel", { title: memoryMenu.memory.title })}
               onClick={() => togglePinned(memoryMenu.memory)}
             >
               <Pin size={15} aria-hidden />
-              {memoryMenu.memory.pinned ? "Unpin" : "Pin"}
+              {memoryMenu.memory.pinned ? t("common.unpin") : t("common.pin")}
             </button>
             <button
               type="button"
               role="menuitem"
               className="danger-menu-item"
-              aria-label={`Delete ${memoryMenu.memory.title}`}
+              aria-label={t("memory.deleteLabel", { title: memoryMenu.memory.title })}
               onClick={() => removeMemory(memoryMenu.memory)}
               disabled={deleting}
             >
               <Trash2 size={15} aria-hidden />
-              Delete
+              {t("common.delete")}
             </button>
           </div>
         ) : null}
@@ -269,7 +275,7 @@ export function MemoryPage() {
             <MarkdownContent>{selected.content}</MarkdownContent>
           </>
         ) : (
-          <div className="empty-state">Select a memory to inspect its Markdown content.</div>
+          <div className="empty-state">{t("memory.selectPrompt")}</div>
         )}
       </article>
     </section>
