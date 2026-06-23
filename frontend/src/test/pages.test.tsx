@@ -26,6 +26,11 @@ const sampleMemory = {
   path: "Memories/Projects/luminamind.md",
 };
 
+async function chooseSelectOption(label: string, optionName: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.click(await screen.findByRole("option", { name: optionName }));
+}
+
 vi.mock("../services/api", () => ({
   getSettings: vi.fn(async () => ({
     vault_path: "D:/memory",
@@ -163,13 +168,13 @@ describe("LuminaMind MVP frontend", () => {
     expect(screen.getByText("Chat model")).toBeInTheDocument();
     expect(screen.getByText("Memory search model")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("API key for DeepSeek Chat"), { target: { value: "deepseek-model-key" } });
-    fireEvent.change(screen.getByLabelText("Default Chat model"), { target: { value: "ollama-chat" } });
+    await chooseSelectOption("Default Chat model", "Ollama Chat");
     fireEvent.change(screen.getByLabelText("Chat context window tokens (blank for automatic)"), {
       target: { value: "65536" },
     });
     fireEvent.change(screen.getByLabelText("Max response tokens"), { target: { value: "4096" } });
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
-    fireEvent.change(screen.getByLabelText("Review behavior"), { target: { value: "auto" } });
+    await chooseSelectOption("Review behavior", "Automatic acceptance");
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() =>
@@ -197,7 +202,7 @@ describe("LuminaMind MVP frontend", () => {
     await waitFor(() => expect(api.listOpenRouterModels).toHaveBeenCalledWith("embedding"));
     fireEvent.click(await screen.findByRole("button", { name: "Add GPT 4.1 Mini as embedding model" }));
     fireEvent.change(screen.getByLabelText("API key for DeepSeek Chat"), { target: { value: "deepseek-key" } });
-    fireEvent.change(screen.getByLabelText("Embedding model"), { target: { value: "openrouter-embedding-openai-gpt-4-1-mini" } });
+    await chooseSelectOption("Embedding model", "GPT 4.1 Mini");
     fireEvent.change(screen.getByLabelText("API key for GPT 4.1 Mini"), { target: { value: "router-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
@@ -232,6 +237,76 @@ describe("LuminaMind MVP frontend", () => {
     expect(stylesCss).toMatch(/\.model-advanced-section summary\s*\{[^}]*color:\s*var\(--ui-text\)/s);
   });
 
+  it("keeps the memory type filter compact and inside the source panel", () => {
+    expect(stylesCss).toMatch(
+      /\.memory-toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(112px,\s*1fr\)\s+minmax\(88px,\s*104px\)[^}]*gap:\s*6px/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.memory-toolbar \.search-field,\s*\.memory-toolbar \.animated-select-trigger\s*\{[^}]*min-width:\s*0/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.memory-toolbar \.animated-select-listbox\s*\{[^}]*right:\s*0;[^}]*left:\s*auto;[^}]*min-width:\s*0;[^}]*width:\s*min\(132px,\s*max\(100%,\s*112px\)\)/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.memory-toolbar \.animated-select-listbox button span\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis/s,
+    );
+  });
+
+  it("renders compact titlebar menus and sends theme changes to the desktop shell", async () => {
+    const setTitlebarTheme = vi.fn(async () => undefined);
+    Object.defineProperty(window, "luminaDesktop", {
+      configurable: true,
+      value: {
+        chooseVaultDirectory: vi.fn(async () => null),
+        getApiBaseUrl: vi.fn(() => null),
+        setTitlebarTheme,
+      },
+    });
+    window.localStorage.setItem("luminamind.ui.theme", "warm");
+    const { container } = render(<App />);
+
+    const titlebar = screen.getByRole("banner", { name: "LuminaMind title bar" });
+    expect(titlebar).toHaveTextContent("LuminaMind");
+    expect(titlebar.querySelector("svg")).toBeInTheDocument();
+    expect(container.querySelector(".brand-identity svg")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "File" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
+    await waitFor(() => expect(setTitlebarTheme).toHaveBeenCalledWith("warm"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+    await chooseSelectOption("Theme color", "Dark");
+
+    await waitFor(() => expect(setTitlebarTheme).toHaveBeenCalledWith("dark"));
+  });
+
+  it("opens custom selects with an animated listbox and closes them after selection", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Theme color" }));
+
+    const listbox = await screen.findByRole("listbox", { name: "Theme color" });
+    expect(listbox).toHaveAttribute("data-state", "open");
+    fireEvent.click(screen.getByRole("option", { name: "Dark" }));
+    expect(listbox).toHaveAttribute("data-state", "closing");
+    await waitFor(() => expect(screen.queryByRole("listbox", { name: "Theme color" })).not.toBeInTheDocument());
+  });
+
+  it("persists desktop splitter sizes from keyboard resizing", async () => {
+    render(<App />);
+    await screen.findByText("Project planning");
+
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize navigation" }), { key: "ArrowRight" });
+    expect(window.localStorage.getItem("luminamind.ui.layout.sidebarWidth")).toBe("252");
+
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize conversations and chat" }), { key: "ArrowRight" });
+    expect(window.localStorage.getItem("luminamind.ui.layout.chatLeftWidth")).toBe("296");
+  });
+
   it("applies and persists appearance preferences from settings and the app shell", async () => {
     window.localStorage.setItem("luminamind.ui.theme", "warm");
     window.localStorage.setItem("luminamind.ui.sidebarCollapsed", "true");
@@ -247,7 +322,7 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
-    fireEvent.change(screen.getByLabelText("Theme color"), { target: { value: "dark" } });
+    await chooseSelectOption("Theme color", "Dark");
     const scrollbarSwitch = screen.getByRole("switch", { name: "Show scrollbars" });
     expect(scrollbarSwitch).not.toBeChecked();
     fireEvent.click(scrollbarSwitch);
@@ -265,8 +340,11 @@ describe("LuminaMind MVP frontend", () => {
     await screen.findByRole("button", { name: "Review, 1 pending" });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Language" }));
+    const chineseOption = await screen.findByRole("option", { name: "中文" });
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("Language"), { target: { value: "zh" } });
+      fireEvent.click(chineseOption);
+      await Promise.resolve();
     });
 
     expect(screen.getByRole("button", { name: "聊天" })).toBeInTheDocument();
@@ -280,8 +358,11 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "设置" }));
     fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "语言" }));
+    const englishOption = await screen.findByRole("option", { name: "English" });
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("语言"), { target: { value: "en" } });
+      fireEvent.click(englishOption);
+      await Promise.resolve();
     });
 
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
@@ -422,7 +503,7 @@ describe("LuminaMind MVP frontend", () => {
     fireEvent.click(screen.getByRole("button", { name: "Memory" }));
     expect(await screen.findByRole("heading", { level: 2, name: "Project record" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Filter memories by type"), { target: { value: "profile" } });
+    await chooseSelectOption("Filter memories by type", "profile");
     expect(await screen.findByRole("heading", { level: 2, name: "Profile record" })).toBeInTheDocument();
     expect(screen.queryByText("Project record")).not.toBeInTheDocument();
 
@@ -707,9 +788,16 @@ describe("LuminaMind MVP frontend", () => {
     expect(modelTrigger).toHaveTextContent("DeepSeek Chat");
     expect(screen.queryByRole("menu", { name: "Response models" })).not.toBeInTheDocument();
     fireEvent.click(modelTrigger);
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "Use Ollama Chat" }));
+    const modelMenu = await screen.findByRole("menu", { name: "Response models" });
+    expect(modelMenu).toHaveAttribute("data-state", "open");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(modelMenu).toHaveAttribute("data-state", "closing");
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "Response models" })).not.toBeInTheDocument());
+
+    fireEvent.click(modelTrigger);
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Use Ollama Chat" }));
     expect(modelTrigger).toHaveTextContent("Ollama Chat");
-    expect(screen.queryByRole("menu", { name: "Response models" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "Response models" })).not.toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Chat message"), { target: { value: "Use local chat" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -817,12 +905,12 @@ describe("LuminaMind MVP frontend", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: "Project planning" }), { clientX: 10, clientY: 10 });
     expect(await screen.findByRole("menuitem", { name: "Unpin Project planning" })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
 
     fireEvent.contextMenu(screen.getByRole("button", { name: "Project planning" }), { clientX: 10, clientY: 10 });
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
   });
 
   it("confirms and deletes the current saved conversation from its context menu", async () => {

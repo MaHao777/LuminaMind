@@ -1,6 +1,8 @@
-import { BookOpenText, CheckCheck, MessageSquareText, PanelLeftClose, PanelLeftOpen, Search, Settings, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { BookOpenText, CheckCheck, MessageSquareText, PanelLeftClose, PanelLeftOpen, Search, Settings } from "lucide-react";
+import { CSSProperties, useCallback, useEffect, useState } from "react";
 
+import { AppTitlebar } from "./components/AppTitlebar";
+import { ResizableSplitter } from "./components/ResizableSplitter";
 import { I18nProvider, useI18n, type LanguageId } from "./i18n";
 import { ChatPage } from "./pages/ChatPage";
 import { MemoryPage } from "./pages/MemoryPage";
@@ -9,10 +11,12 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { getSettings, listSuggestions, type AppSettings, type MemorySuggestion } from "./services/api";
 import {
   loadLanguage,
+  loadLayoutNumber,
   loadShowScrollbars,
   loadSidebarCollapsed,
   loadTheme,
   saveLanguage,
+  saveLayoutNumber,
   saveShowScrollbars,
   saveSidebarCollapsed,
   saveTheme,
@@ -27,6 +31,12 @@ const navItems = [
   { id: "review", labelKey: "nav.review", icon: CheckCheck },
   { id: "settings", labelKey: "nav.settings", icon: Settings },
 ] as const satisfies Array<{ id: Page; labelKey: "nav.chat" | "nav.memory" | "nav.review" | "nav.settings"; icon: typeof MessageSquareText }>;
+
+const SIDEBAR_WIDTH = {
+  default: 236,
+  min: 184,
+  max: 360,
+};
 
 export default function App() {
   const [language, setLanguage] = useState<LanguageId>(() => loadLanguage());
@@ -57,6 +67,9 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
   const [theme, setTheme] = useState<ThemeId>(() => loadTheme());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => loadSidebarCollapsed());
   const [showScrollbars, setShowScrollbars] = useState(() => loadShowScrollbars());
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    loadLayoutNumber("sidebarWidth", SIDEBAR_WIDTH.default, SIDEBAR_WIDTH.min, SIDEBAR_WIDTH.max),
+  );
   const pendingSuggestionCount = suggestions.filter((suggestion) => suggestion.status === "pending").length;
 
   useEffect(() => {
@@ -82,6 +95,10 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
     void refreshPendingSuggestions();
   }, [refreshPendingSuggestions]);
 
+  useEffect(() => {
+    window.luminaDesktop?.setTitlebarTheme?.(theme).catch(() => undefined);
+  }, [theme]);
+
   function changeTheme(nextTheme: ThemeId) {
     setTheme(nextTheme);
     saveTheme(nextTheme);
@@ -100,17 +117,27 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
     saveShowScrollbars(show);
   }
 
+  function resizeSidebar(width: number) {
+    setSidebarWidth(width);
+    saveLayoutNumber("sidebarWidth", width, SIDEBAR_WIDTH.min, SIDEBAR_WIDTH.max);
+  }
+
+  const shellStyle = {
+    "--sidebar-width": `${sidebarWidth}px`,
+  } as CSSProperties;
+
   return (
     <div
       className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}
       data-theme={theme}
       data-scrollbars={showScrollbars ? "visible" : "hidden"}
       lang={language === "zh" ? "zh-CN" : "en"}
+      style={shellStyle}
     >
+      <AppTitlebar />
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-identity">
-            <Sparkles size={22} aria-hidden />
             <div className="brand-copy">
               <strong>LuminaMind</strong>
               <span>{t("app.brandSubtitle")}</span>
@@ -155,6 +182,17 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
           <span>{settings?.vault_path || t("app.noVaultSelected")}</span>
         </div>
       </aside>
+
+      <ResizableSplitter
+        label={t("app.resizeNavigation")}
+        value={sidebarWidth}
+        min={SIDEBAR_WIDTH.min}
+        max={SIDEBAR_WIDTH.max}
+        defaultValue={SIDEBAR_WIDTH.default}
+        onChange={resizeSidebar}
+        className="app-sidebar-resizer"
+        disabled={sidebarCollapsed}
+      />
 
       <main className={page === "chat" ? "main-panel chat-main-panel" : "main-panel"}>
         {error ? <div className="banner error">{error}</div> : null}

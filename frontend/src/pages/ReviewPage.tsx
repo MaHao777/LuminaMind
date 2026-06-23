@@ -1,9 +1,11 @@
 import { Check, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
+import { ResizableSplitter } from "../components/ResizableSplitter";
 import { useI18n } from "../i18n";
 import { acceptSuggestion, rejectSuggestion, type MemorySuggestion } from "../services/api";
+import { loadLayoutNumber, saveLayoutNumber } from "../services/uiPreferences";
 
 type Props = {
   suggestions: MemorySuggestion[];
@@ -12,6 +14,12 @@ type Props = {
 
 type ReviewFilter = "all" | "pending" | "accepted" | "rejected";
 
+const REVIEW_LEFT_WIDTH = {
+  default: 320,
+  min: 240,
+  max: 520,
+};
+
 export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
   const { t } = useI18n();
   const [processingIds, setProcessingIds] = useState<Set<string>>(() => new Set());
@@ -19,6 +27,9 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<ReviewFilter>("all");
   const [selectedId, setSelectedId] = useState("");
+  const [reviewLeftWidth, setReviewLeftWidth] = useState(() =>
+    loadLayoutNumber("reviewLeftWidth", REVIEW_LEFT_WIDTH.default, REVIEW_LEFT_WIDTH.min, REVIEW_LEFT_WIDTH.max),
+  );
   const visibleSuggestions = useMemo(
     () => suggestions.filter((suggestion) => filter === "all" || suggestion.status === filter),
     [filter, suggestions],
@@ -58,8 +69,17 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
     }
   }
 
+  function resizeReviewLeft(width: number) {
+    setReviewLeftWidth(width);
+    saveLayoutNumber("reviewLeftWidth", width, REVIEW_LEFT_WIDTH.min, REVIEW_LEFT_WIDTH.max);
+  }
+
+  const gridStyle = {
+    "--split-left-width": `${reviewLeftWidth}px`,
+  } as CSSProperties;
+
   return (
-    <section className="page-grid review-grid">
+    <section className="page-grid review-grid split-grid" style={gridStyle}>
       <aside className="panel suggestion-browser">
         <div className="panel-header">
           <h1>{t("nav.review")}</h1>
@@ -96,6 +116,15 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
           </div>
         )}
       </aside>
+
+      <ResizableSplitter
+        label={t("app.resizeListDetail")}
+        value={reviewLeftWidth}
+        min={REVIEW_LEFT_WIDTH.min}
+        max={REVIEW_LEFT_WIDTH.max}
+        defaultValue={REVIEW_LEFT_WIDTH.default}
+        onChange={resizeReviewLeft}
+      />
 
       <article className="panel suggestion-detail">
         {selected ? (

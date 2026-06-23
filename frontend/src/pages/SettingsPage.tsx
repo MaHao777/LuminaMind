@@ -1,6 +1,8 @@
 import { FolderOpen, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { CSSProperties, ChangeEvent, useEffect, useRef, useState } from "react";
 
+import { AnimatedSelect } from "../components/AnimatedSelect";
+import { ResizableSplitter } from "../components/ResizableSplitter";
 import { useI18n, type LanguageId } from "../i18n";
 import {
   listOpenRouterModels,
@@ -15,7 +17,7 @@ import {
   type ModelProvider,
   type ProviderModelCandidate,
 } from "../services/api";
-import type { ThemeId } from "../services/uiPreferences";
+import { loadLayoutNumber, saveLayoutNumber, type ThemeId } from "../services/uiPreferences";
 
 const emptySettings: AppSettings = {
   vault_path: "",
@@ -36,6 +38,12 @@ const emptySettings: AppSettings = {
 type SettingsSection = "vault" | "review" | "models" | "appearance";
 
 const capabilities: ModelCapability[] = ["chat", "embedding"];
+
+const SETTINGS_LEFT_WIDTH = {
+  default: 320,
+  min: 240,
+  max: 520,
+};
 
 function modelRequiresApiKey(model: ConfiguredModel | undefined): boolean {
   return model?.provider === "deepseek" || model?.provider === "openrouter";
@@ -96,6 +104,9 @@ export function SettingsPage({
     embedding: [],
   });
   const [catalogLoading, setCatalogLoading] = useState<ModelCapability | null>(null);
+  const [settingsLeftWidth, setSettingsLeftWidth] = useState(() =>
+    loadLayoutNumber("settingsLeftWidth", SETTINGS_LEFT_WIDTH.default, SETTINGS_LEFT_WIDTH.min, SETTINGS_LEFT_WIDTH.max),
+  );
   const manualIdRef = useRef(0);
   const sections: Array<{ id: SettingsSection; label: string; description: string }> = [
     { id: "vault", label: t("settings.vault"), description: t("settings.vaultDescription") },
@@ -297,10 +308,18 @@ export function SettingsPage({
     return capability === "chat" ? ["deepseek", "ollama", "openrouter"] : ["local_hash", "ollama", "openrouter"];
   }
 
+  function resizeSettingsLeft(width: number) {
+    setSettingsLeftWidth(width);
+    saveLayoutNumber("settingsLeftWidth", width, SETTINGS_LEFT_WIDTH.min, SETTINGS_LEFT_WIDTH.max);
+  }
+
   const chatModels = form.configured_models.filter((model) => model.capability === "chat");
   const embeddingModels = form.configured_models.filter((model) => model.capability === "embedding");
   const selectedChat = chatModels.find((model) => model.id === form.chat_model_id);
   const selectedEmbedding = embeddingModels.find((model) => model.id === form.embedding_model_id);
+  const gridStyle = {
+    "--split-left-width": `${settingsLeftWidth}px`,
+  } as CSSProperties;
 
   function renderAssignedModelCard(model: ConfiguredModel | undefined, title: string) {
     if (!model) return <div className="banner error">{t("settings.selectConfiguredTitle", { title })}</div>;
@@ -348,7 +367,7 @@ export function SettingsPage({
   }
 
   return (
-    <section className="page-grid settings-grid">
+    <section className="page-grid settings-grid split-grid" style={gridStyle}>
       <aside className="panel settings-browser">
         <h1>{t("nav.settings")}</h1>
         <div className="settings-category-list" aria-label={t("settings.settingsCategories")}>
@@ -366,6 +385,15 @@ export function SettingsPage({
           ))}
         </div>
       </aside>
+
+      <ResizableSplitter
+        label={t("app.resizeListDetail")}
+        value={settingsLeftWidth}
+        min={SETTINGS_LEFT_WIDTH.min}
+        max={SETTINGS_LEFT_WIDTH.max}
+        defaultValue={SETTINGS_LEFT_WIDTH.default}
+        onChange={resizeSettingsLeft}
+      />
 
       <article className="panel settings-detail">
         {section === "vault" ? (
@@ -385,13 +413,15 @@ export function SettingsPage({
         {section === "review" ? (
           <div className="form-panel">
             <h2>{t("settings.review")}</h2>
-            <label>
-              {t("settings.reviewBehavior")}
-              <select value={form.review_mode} onChange={updateText("review_mode")}>
-                <option value="manual">{t("settings.manualAcceptance")}</option>
-                <option value="auto">{t("settings.automaticAcceptance")}</option>
-              </select>
-            </label>
+            <AnimatedSelect
+              label={t("settings.reviewBehavior")}
+              value={form.review_mode}
+              onChange={(nextValue) => update("review_mode", nextValue as AppSettings["review_mode"])}
+              options={[
+                { value: "manual", label: t("settings.manualAcceptance") },
+                { value: "auto", label: t("settings.automaticAcceptance") },
+              ]}
+            />
           </div>
         ) : null}
 
@@ -400,27 +430,23 @@ export function SettingsPage({
             <h2>{t("settings.models")}</h2>
             <section className="model-settings-section">
               <h3>{t("settings.chatModel")}</h3>
-              <label>
-                {t("settings.defaultChatModel")}
-                <select value={form.chat_model_id} onChange={updateText("chat_model_id")}>
-                  {chatModels.map((model) => (
-                    <option key={model.id} value={model.id}>{model.name}</option>
-                  ))}
-                </select>
-              </label>
+              <AnimatedSelect
+                label={t("settings.defaultChatModel")}
+                value={form.chat_model_id}
+                onChange={(nextValue) => update("chat_model_id", nextValue)}
+                options={chatModels.map((model) => ({ value: model.id, label: model.name }))}
+              />
               {renderAssignedModelCard(selectedChat, t("settings.chatModel"))}
             </section>
 
             <section className="model-settings-section">
               <h3>{t("settings.memorySearchModel")}</h3>
-              <label>
-                {t("settings.embeddingModel")}
-                <select value={form.embedding_model_id} onChange={updateText("embedding_model_id")}>
-                  {embeddingModels.map((model) => (
-                    <option key={model.id} value={model.id}>{model.name}</option>
-                  ))}
-                </select>
-              </label>
+              <AnimatedSelect
+                label={t("settings.embeddingModel")}
+                value={form.embedding_model_id}
+                onChange={(nextValue) => update("embedding_model_id", nextValue)}
+                options={embeddingModels.map((model) => ({ value: model.id, label: model.name }))}
+              />
               {renderAssignedModelCard(selectedEmbedding, t("settings.memorySearchModel"))}
             </section>
 
@@ -497,15 +523,14 @@ export function SettingsPage({
                         value={model.name}
                         onChange={(event) => updateConfiguredModel(model.id, { name: event.target.value })}
                       />
-                      <select
-                        aria-label={`Provider for ${model.id}`}
+                      <AnimatedSelect
+                        label={`Provider for ${model.id}`}
                         value={model.provider}
-                        onChange={(event) => updateConfiguredModel(model.id, { provider: event.target.value as ModelProvider })}
-                      >
-                        {providerOptions(capability).map((provider) => (
-                          <option key={provider} value={provider}>{provider}</option>
-                        ))}
-                      </select>
+                        onChange={(nextValue) => updateConfiguredModel(model.id, { provider: nextValue as ModelProvider })}
+                        options={providerOptions(capability).map((provider) => ({ value: provider, label: provider }))}
+                        className="configured-model-provider-select"
+                        hideLabel
+                      />
                       <input
                         aria-label={`Model ID for ${model.id}`}
                         value={model.model}
@@ -532,21 +557,25 @@ export function SettingsPage({
         {section === "appearance" ? (
           <div className="form-panel">
             <h2>{t("settings.appearance")}</h2>
-            <label>
-              {t("settings.language")}
-              <select value={language} onChange={(event) => onLanguageChange(event.target.value as LanguageId)}>
-                <option value="en">{t("settings.languageEnglish")}</option>
-                <option value="zh">{t("settings.languageChinese")}</option>
-              </select>
-            </label>
-            <label>
-              {t("settings.themeColor")}
-              <select value={theme} onChange={(event) => onThemeChange(event.target.value as ThemeId)}>
-                <option value="default">{t("settings.themeDefault")}</option>
-                <option value="dark">{t("settings.themeDark")}</option>
-                <option value="warm">{t("settings.themeWarm")}</option>
-              </select>
-            </label>
+            <AnimatedSelect
+              label={t("settings.language")}
+              value={language}
+              onChange={(nextValue) => onLanguageChange(nextValue as LanguageId)}
+              options={[
+                { value: "en", label: t("settings.languageEnglish") },
+                { value: "zh", label: t("settings.languageChinese") },
+              ]}
+            />
+            <AnimatedSelect
+              label={t("settings.themeColor")}
+              value={theme}
+              onChange={(nextValue) => onThemeChange(nextValue as ThemeId)}
+              options={[
+                { value: "default", label: t("settings.themeDefault") },
+                { value: "dark", label: t("settings.themeDark") },
+                { value: "warm", label: t("settings.themeWarm") },
+              ]}
+            />
             <label className="switch-setting">
               <span className="switch-setting-copy">
                 <strong>{t("settings.scrollbars")}</strong>

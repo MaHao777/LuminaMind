@@ -1,10 +1,16 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const net = require("net");
 const path = require("path");
 
 let backendProcess = null;
+
+const titlebarThemes = {
+  default: { color: "#eef1f4", symbolColor: "#1d2329" },
+  dark: { color: "#0f1317", symbolColor: "#e6e9ed" },
+  warm: { color: "#f5f0e7", symbolColor: "#352f27" },
+};
 
 ipcMain.handle("vault:choose-directory", async () => {
   const parent = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -16,6 +22,13 @@ ipcMain.handle("vault:choose-directory", async () => {
     ? await dialog.showOpenDialog(parent, options)
     : await dialog.showOpenDialog(options);
   return result.canceled ? null : result.filePaths[0] || null;
+});
+
+ipcMain.handle("titlebar:set-theme", async (_event, theme) => {
+  const options = titlebarThemes[theme] || titlebarThemes.default;
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.setTitleBarOverlay(options);
+  }
 });
 
 function devServerUrl() {
@@ -107,18 +120,23 @@ function stopPackagedBackend() {
 }
 
 function createWindow() {
+  Menu.setApplicationMenu(null);
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 980,
     minHeight: 680,
     title: "LuminaMind",
+    titleBarStyle: "hidden",
+    titleBarOverlay: titlebarThemes.default,
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: `${__dirname}/preload.cjs`,
     },
   });
+  win.setMenuBarVisibility(false);
 
   if (app.isPackaged) {
     win.loadFile(distIndexPath());

@@ -6,6 +6,11 @@ const SIDEBAR_COLLAPSED_KEY = "luminamind.ui.sidebarCollapsed";
 const MEMORY_SOURCE_COLLAPSED_KEY = "luminamind.ui.memorySourceCollapsed";
 const SHOW_SCROLLBARS_KEY = "luminamind.ui.showScrollbars";
 const LANGUAGE_KEY = "luminamind.ui.language";
+const LAYOUT_KEY_PREFIX = "luminamind.ui.layout.";
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
 
 export function loadTheme(): ThemeId {
   try {
@@ -85,6 +90,25 @@ export function loadLanguage(): LanguageId {
 export function saveLanguage(language: LanguageId) {
   try {
     window.localStorage.setItem(LANGUAGE_KEY, language);
+  } catch {
+    // Ignore storage failures in restricted browser environments.
+  }
+}
+
+export function loadLayoutNumber(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = window.localStorage.getItem(`${LAYOUT_KEY_PREFIX}${key}`);
+    if (raw === null) return fallback;
+    const stored = Number(raw);
+    return Number.isFinite(stored) ? clampNumber(stored, min, max) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveLayoutNumber(key: string, value: number, min: number, max: number) {
+  try {
+    window.localStorage.setItem(`${LAYOUT_KEY_PREFIX}${key}`, String(clampNumber(value, min, max)));
   } catch {
     // Ignore storage failures in restricted browser environments.
   }

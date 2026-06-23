@@ -1,7 +1,17 @@
 import { Check, ChevronDown, PanelRightClose, PanelRightOpen, Pin, Plus, Search, Send, Trash2, X } from "lucide-react";
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
+import { ResizableSplitter } from "../components/ResizableSplitter";
+import { useAnimatedPresence, useRetainedPresence } from "../components/useAnimatedPresence";
 import { useI18n } from "../i18n";
 import {
   createConversation,
@@ -16,7 +26,12 @@ import {
   type ConversationSummary,
   type UsedMemory,
 } from "../services/api";
-import { loadMemorySourceCollapsed, saveMemorySourceCollapsed } from "../services/uiPreferences";
+import {
+  loadLayoutNumber,
+  loadMemorySourceCollapsed,
+  saveLayoutNumber,
+  saveMemorySourceCollapsed,
+} from "../services/uiPreferences";
 
 type Message = {
   role: "user" | "assistant";
@@ -42,6 +57,18 @@ type PostprocessTask = {
   chatModelId?: string;
   refreshIndex: boolean;
   vaultPath?: string;
+};
+
+const CHAT_LEFT_WIDTH = {
+  default: 280,
+  min: 220,
+  max: 420,
+};
+
+const CHAT_RIGHT_WIDTH = {
+  default: 280,
+  min: 200,
+  max: 420,
 };
 
 type Props = {
@@ -101,6 +128,12 @@ export function ChatPage({
   const [retryPostprocess, setRetryPostprocess] = useState<PostprocessTask | null>(null);
   const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
   const [memorySourceCollapsed, setMemorySourceCollapsed] = useState(() => loadMemorySourceCollapsed());
+  const [chatLeftWidth, setChatLeftWidth] = useState(() =>
+    loadLayoutNumber("chatLeftWidth", CHAT_LEFT_WIDTH.default, CHAT_LEFT_WIDTH.min, CHAT_LEFT_WIDTH.max),
+  );
+  const [chatRightWidth, setChatRightWidth] = useState(() =>
+    loadLayoutNumber("chatRightWidth", CHAT_RIGHT_WIDTH.default, CHAT_RIGHT_WIDTH.min, CHAT_RIGHT_WIDTH.max),
+  );
   const messageEndRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const chatModelMenuRef = useRef<HTMLDivElement>(null);
@@ -130,6 +163,8 @@ export function ChatPage({
     ? chatModelId
     : (defaultChatModelId ?? "");
   const selectedChatModel = chatModels.find((model) => model.id === selectedChatModelId);
+  const chatModelMenuPresence = useAnimatedPresence(chatModelMenuOpen);
+  const conversationMenuPresence = useRetainedPresence(conversationMenu);
 
   function selectConversation(nextId?: string) {
     conversationIdRef.current = nextId;
@@ -475,8 +510,27 @@ export function ChatPage({
     });
   }
 
+  function resizeChatLeft(width: number) {
+    setChatLeftWidth(width);
+    saveLayoutNumber("chatLeftWidth", width, CHAT_LEFT_WIDTH.min, CHAT_LEFT_WIDTH.max);
+  }
+
+  function resizeChatRight(width: number) {
+    setChatRightWidth(width);
+    saveLayoutNumber("chatRightWidth", width, CHAT_RIGHT_WIDTH.min, CHAT_RIGHT_WIDTH.max);
+  }
+
+  const gridStyle = {
+    "--chat-left-width": `${chatLeftWidth}px`,
+    "--chat-right-width": `${chatRightWidth}px`,
+  } as CSSProperties;
+
   return (
-    <section className={memorySourceCollapsed ? "page-grid chat-grid memory-source-collapsed" : "page-grid chat-grid"} hidden={hidden}>
+    <section
+      className={memorySourceCollapsed ? "page-grid chat-grid memory-source-collapsed" : "page-grid chat-grid"}
+      hidden={hidden}
+      style={gridStyle}
+    >
       <div className="panel conversation-list">
         <div className="panel-header">
           <h1>{t("nav.chat")}</h1>
@@ -541,31 +595,32 @@ export function ChatPage({
             ))}
           </div>
         )}
-        {conversationMenu ? (
+        {conversationMenuPresence.rendered && conversationMenuPresence.value ? (
           <div
             ref={menuRef}
             role="menu"
             className="conversation-menu"
             aria-label={t("chat.conversationActions")}
-            style={{ left: conversationMenu.left, top: conversationMenu.top }}
+            data-state={conversationMenuPresence.state}
+            style={{ left: conversationMenuPresence.value.left, top: conversationMenuPresence.value.top }}
           >
             <button
               type="button"
               role="menuitem"
-              aria-label={conversationMenu.conversation.pinned
-                ? t("chat.unpinConversationLabel", { title: conversationMenu.conversation.title || t("chat.untitled") })
-                : t("chat.pinConversationLabel", { title: conversationMenu.conversation.title || t("chat.untitled") })}
-              onClick={() => togglePinned(conversationMenu.conversation)}
+              aria-label={conversationMenuPresence.value.conversation.pinned
+                ? t("chat.unpinConversationLabel", { title: conversationMenuPresence.value.conversation.title || t("chat.untitled") })
+                : t("chat.pinConversationLabel", { title: conversationMenuPresence.value.conversation.title || t("chat.untitled") })}
+              onClick={() => togglePinned(conversationMenuPresence.value!.conversation)}
             >
               <Pin size={15} aria-hidden />
-              {conversationMenu.conversation.pinned ? t("common.unpin") : t("common.pin")}
+              {conversationMenuPresence.value.conversation.pinned ? t("common.unpin") : t("common.pin")}
             </button>
             <button
               type="button"
               role="menuitem"
               className="danger-menu-item"
-              aria-label={t("chat.deleteConversationLabel", { title: conversationMenu.conversation.title || t("chat.untitled") })}
-              onClick={() => removeConversation(conversationMenu.conversation)}
+              aria-label={t("chat.deleteConversationLabel", { title: conversationMenuPresence.value.conversation.title || t("chat.untitled") })}
+              onClick={() => removeConversation(conversationMenuPresence.value!.conversation)}
             >
               <Trash2 size={15} aria-hidden />
               {t("common.delete")}
@@ -573,6 +628,16 @@ export function ChatPage({
           </div>
         ) : null}
       </div>
+
+      <ResizableSplitter
+        label={t("app.resizeConversations")}
+        value={chatLeftWidth}
+        min={CHAT_LEFT_WIDTH.min}
+        max={CHAT_LEFT_WIDTH.max}
+        defaultValue={CHAT_LEFT_WIDTH.default}
+        onChange={resizeChatLeft}
+        className="chat-left-resizer"
+      />
 
       <section className="panel chat-panel" aria-label={t("chat.agentConversation")}>
         <div className="messages">
@@ -647,8 +712,13 @@ export function ChatPage({
                 <span className="composer-model-name">{selectedChatModel?.name ?? t("chat.modelFallback")}</span>
                 <ChevronDown size={13} aria-hidden />
               </button>
-              {chatModelMenuOpen ? (
-                <div className="composer-model-menu" role="menu" aria-label={t("chat.responseModels")}>
+              {chatModelMenuPresence.rendered ? (
+                <div
+                  className="composer-model-menu"
+                  role="menu"
+                  aria-label={t("chat.responseModels")}
+                  data-state={chatModelMenuPresence.state}
+                >
                   {chatModels.map((model) => (
                     <button
                       type="button"
@@ -675,6 +745,18 @@ export function ChatPage({
           </div>
         </form>
       </section>
+
+      <ResizableSplitter
+        label={t("app.resizeChatMemories")}
+        value={chatRightWidth}
+        min={CHAT_RIGHT_WIDTH.min}
+        max={CHAT_RIGHT_WIDTH.max}
+        defaultValue={CHAT_RIGHT_WIDTH.default}
+        onChange={resizeChatRight}
+        className="chat-right-resizer"
+        disabled={memorySourceCollapsed}
+        invertDrag
+      />
 
       <aside className="panel memory-source-panel">
         <div className="memory-source-header">

@@ -1,5 +1,6 @@
 import { Pin, RefreshCw, Search, Trash2 } from "lucide-react";
 import {
+  CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   useEffect,
@@ -8,15 +9,25 @@ import {
   useState,
 } from "react";
 
+import { AnimatedSelect } from "../components/AnimatedSelect";
 import { MarkdownContent } from "../components/MarkdownContent";
+import { ResizableSplitter } from "../components/ResizableSplitter";
+import { useRetainedPresence } from "../components/useAnimatedPresence";
 import { useI18n } from "../i18n";
 import { deleteMemory, listMemories, rebuildIndex, scanVault, updateMemoryPin, type MemoryNote } from "../services/api";
+import { loadLayoutNumber, saveLayoutNumber } from "../services/uiPreferences";
 
 type MemoryTypeFilter = "all" | "profile" | "project" | "concept" | "task" | "log";
 type MemoryMenu = {
   memory: MemoryNote;
   left: number;
   top: number;
+};
+
+const MEMORY_LEFT_WIDTH = {
+  default: 320,
+  min: 240,
+  max: 520,
 };
 
 function sortMemories(memories: MemoryNote[]) {
@@ -38,7 +49,11 @@ export function MemoryPage() {
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [memoryMenu, setMemoryMenu] = useState<MemoryMenu | null>(null);
+  const [memoryLeftWidth, setMemoryLeftWidth] = useState(() =>
+    loadLayoutNumber("memoryLeftWidth", MEMORY_LEFT_WIDTH.default, MEMORY_LEFT_WIDTH.min, MEMORY_LEFT_WIDTH.max),
+  );
   const menuRef = useRef<HTMLDivElement>(null);
+  const memoryMenuPresence = useRetainedPresence(memoryMenu);
 
   async function load() {
     try {
@@ -161,8 +176,17 @@ export function MemoryPage() {
     await load();
   }
 
+  function resizeMemoryLeft(width: number) {
+    setMemoryLeftWidth(width);
+    saveLayoutNumber("memoryLeftWidth", width, MEMORY_LEFT_WIDTH.min, MEMORY_LEFT_WIDTH.max);
+  }
+
+  const gridStyle = {
+    "--split-left-width": `${memoryLeftWidth}px`,
+  } as CSSProperties;
+
   return (
-    <section className="page-grid memory-grid">
+    <section className="page-grid memory-grid split-grid" style={gridStyle}>
       <aside className="panel file-tree">
         <div className="panel-header">
           <h1>{t("nav.memory")}</h1>
@@ -181,18 +205,20 @@ export function MemoryPage() {
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
-          <select
-            aria-label={t("memory.filterByType")}
+          <AnimatedSelect
+            label={t("memory.filterByType")}
             value={typeFilter}
-            onChange={(event) => setTypeFilter(event.target.value as MemoryTypeFilter)}
-          >
-            <option value="all">{t("memory.allTypes")}</option>
-            <option value="profile">{t("memory.profile")}</option>
-            <option value="project">{t("memory.project")}</option>
-            <option value="concept">{t("memory.concept")}</option>
-            <option value="task">{t("memory.task")}</option>
-            <option value="log">{t("memory.log")}</option>
-          </select>
+            onChange={(nextValue) => setTypeFilter(nextValue as MemoryTypeFilter)}
+            hideLabel
+            options={[
+              { value: "all", label: t("memory.allTypes") },
+              { value: "profile", label: t("memory.profile") },
+              { value: "project", label: t("memory.project") },
+              { value: "concept", label: t("memory.concept") },
+              { value: "task", label: t("memory.task") },
+              { value: "log", label: t("memory.log") },
+            ]}
+          />
         </div>
 
         {filteredMemories.length === 0 ? (
@@ -224,31 +250,32 @@ export function MemoryPage() {
             ))}
           </div>
         )}
-        {memoryMenu ? (
+        {memoryMenuPresence.rendered && memoryMenuPresence.value ? (
           <div
             ref={menuRef}
             role="menu"
             className="conversation-menu"
             aria-label={t("memory.actions")}
-            style={{ left: memoryMenu.left, top: memoryMenu.top }}
+            data-state={memoryMenuPresence.state}
+            style={{ left: memoryMenuPresence.value.left, top: memoryMenuPresence.value.top }}
           >
             <button
               type="button"
               role="menuitem"
-              aria-label={memoryMenu.memory.pinned
-                ? t("memory.unpinLabel", { title: memoryMenu.memory.title })
-                : t("memory.pinLabel", { title: memoryMenu.memory.title })}
-              onClick={() => togglePinned(memoryMenu.memory)}
+              aria-label={memoryMenuPresence.value.memory.pinned
+                ? t("memory.unpinLabel", { title: memoryMenuPresence.value.memory.title })
+                : t("memory.pinLabel", { title: memoryMenuPresence.value.memory.title })}
+              onClick={() => togglePinned(memoryMenuPresence.value!.memory)}
             >
               <Pin size={15} aria-hidden />
-              {memoryMenu.memory.pinned ? t("common.unpin") : t("common.pin")}
+              {memoryMenuPresence.value.memory.pinned ? t("common.unpin") : t("common.pin")}
             </button>
             <button
               type="button"
               role="menuitem"
               className="danger-menu-item"
-              aria-label={t("memory.deleteLabel", { title: memoryMenu.memory.title })}
-              onClick={() => removeMemory(memoryMenu.memory)}
+              aria-label={t("memory.deleteLabel", { title: memoryMenuPresence.value.memory.title })}
+              onClick={() => removeMemory(memoryMenuPresence.value!.memory)}
               disabled={deleting}
             >
               <Trash2 size={15} aria-hidden />
@@ -259,6 +286,15 @@ export function MemoryPage() {
         {status ? <div className="banner success">{status}</div> : null}
         {error ? <div className="banner error">{error}</div> : null}
       </aside>
+
+      <ResizableSplitter
+        label={t("app.resizeListDetail")}
+        value={memoryLeftWidth}
+        min={MEMORY_LEFT_WIDTH.min}
+        max={MEMORY_LEFT_WIDTH.max}
+        defaultValue={MEMORY_LEFT_WIDTH.default}
+        onChange={resizeMemoryLeft}
+      />
 
       <article className="panel markdown-reader">
         {selected ? (
