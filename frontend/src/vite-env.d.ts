@@ -3,5 +3,6 @@
 interface Window {
   luminaDesktop?: {
     chooseVaultDirectory: () => Promise<string | null>;
+    getApiBaseUrl?: () => string | null;
   };
 }

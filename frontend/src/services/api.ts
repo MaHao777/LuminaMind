@@ -106,7 +106,11 @@ export type MemorySuggestion = {
   status: "pending" | "processing" | "accepted" | "rejected";
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+export function getApiBaseUrl(): string {
+  const desktopApiBase = window.luminaDesktop?.getApiBaseUrl?.();
+  const configuredApiBase = desktopApiBase || import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+  return configuredApiBase.replace(/\/$/, "");
+}
 
 function getErrorMessage(text: string, status: number): string {
   if (!text) return `Request failed: ${status}`;
@@ -127,7 +131,7 @@ function getErrorMessage(text: string, status: number): string {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     headers: {
       "Content-Type": "application/json",
       ...(options.headers ?? {}),

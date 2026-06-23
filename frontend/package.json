@@ -7,11 +7,52 @@
     "dev": "vite --host 127.0.0.1",
     "electron:dev": "wait-on http://127.0.0.1:5173 && electron electron/main.cjs",
     "build": "tsc --noEmit && vite build",
+    "build:backend": "cd ../backend && .\\.venv\\Scripts\\python.exe -m PyInstaller pyinstaller/LuminaMindBackend.spec --noconfirm --clean",
+    "dist:dir": "npm run build && npm run build:backend && pnpm dlx electron-builder@24.13.3 --dir",
+    "dist:win": "npm run build && npm run build:backend && pnpm dlx electron-builder@24.13.3 --win nsis && node scripts/write-sha256.cjs",
     "test": "vitest --environment jsdom"
+  },
+  "build": {
+    "appId": "com.luminamind.agent",
+    "productName": "LuminaMind",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/LuminaMindBackend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "LuminaMind-${version}-Setup.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^31.0.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
     "lucide-react": "^0.468.0",
@@ -30,6 +71,7 @@
     "@testing-library/react": "^15.0.7",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "electron": "^31.0.0",
     "jsdom": "^24.1.0",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"

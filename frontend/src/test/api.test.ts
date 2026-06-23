@@ -46,6 +46,24 @@ describe("API error messages", () => {
     expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:8000/api/conversations?query=100%25%20plan");
   });
 
+  it("uses the Electron-provided API base URL when packaged", async () => {
+    window.luminaDesktop = {
+      chooseVaultDirectory: vi.fn(),
+      getApiBaseUrl: () => "http://127.0.0.1:8765",
+    };
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ conversations: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await listConversations();
+
+    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:8765/api/conversations");
+  });
+
   it("sends an optional chat model override for responses and suggestion generation", async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ answer: "ok", used_memories: [] }), { status: 200 }))

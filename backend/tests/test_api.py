@@ -15,6 +15,30 @@ from lumina.indexer import index_status, load_vectors, rebuild_index as real_reb
 from lumina.models import RetrievalResult
 
 
+def test_health_endpoint_is_available_before_vault_selection() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_packaged_file_origin_can_call_backend() -> None:
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/health",
+        headers={
+            "Origin": "null",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "null"
+
+
 def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(app)
     vault_path = tmp_path / "vault"

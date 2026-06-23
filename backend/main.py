@@ -73,7 +73,7 @@ _index_locks: dict[Path, Lock] = {}
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "null"],
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
@@ -85,6 +85,11 @@ def require_vault() -> Path:
     if state.vault_root is None:
         raise HTTPException(status_code=400, detail="Vault is not selected")
     return state.vault_root
+
+
+@app.get("/api/health")
+def health() -> dict:
+    return {"status": "ok"}
 
 
 def index_lock(vault_root: Path) -> Lock:
