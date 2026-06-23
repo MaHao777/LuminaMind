@@ -158,7 +158,7 @@ export function saveSettings(payload: AppSettings) {
 }
 
 export function selectVault(path: string) {
-  return request<{ path: string }>("/api/vault/select", {
+  return request<{ path: string; settings?: AppSettings }>("/api/vault/select", {
     method: "POST",
     body: JSON.stringify({ path }),
   });

@@ -9,6 +9,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from lumina.app_state import load_last_vault_path, save_last_vault_path
 from lumina.config import AppSettings
 from lumina.embedding import EmbeddingConfigurationError, embedding_signature
 from lumina.conversations import (
@@ -82,14 +83,42 @@ app.add_middleware(
 
 
 def require_vault() -> Path:
-    if state.vault_root is None:
+    vault_root = current_vault_root()
+    if vault_root is None:
         raise HTTPException(status_code=400, detail="Vault is not selected")
-    return state.vault_root
+    return vault_root
 
 
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+def restore_last_vault() -> Path | None:
+    last_vault_path = load_last_vault_path()
+    if last_vault_path is None:
+        return None
+    try:
+        resolved = last_vault_path.resolve()
+    except OSError:
+        logger.warning("Remembered vault path cannot be resolved: %s", last_vault_path)
+        return None
+    if not resolved.exists():
+        logger.warning("Remembered vault path no longer exists: %s", resolved)
+        return None
+    try:
+        vault = initialize_vault(resolved)
+    except OSError:
+        logger.exception("Remembered vault path cannot be initialized: %s", resolved)
+        return None
+    state.vault_root = vault.root
+    return vault.root
+
+
+def current_vault_root() -> Path | None:
+    if state.vault_root is None:
+        return restore_last_vault()
+    return state.vault_root
 
 
 def index_lock(vault_root: Path) -> Lock:
@@ -109,6 +138,14 @@ def refresh_index_request(vault_root: Path, settings: AppSettings, scan_first: b
         return refresh_index(vault_root, settings, scan_first=scan_first)
     except EmbeddingConfigurationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Embedding provider is unavailable. Check that the selected embedding service is running "
+                "and reachable, or switch the embedding model to Local Hash in Settings."
+            ),
+        ) from None
 
 
 def background_refresh_index(vault_root: Path) -> None:
@@ -147,18 +184,20 @@ def openrouter_catalog_api_key(settings: AppSettings) -> str:
 
 @app.get("/api/settings")
 def get_settings() -> dict:
-    settings = AppSettings.load(state.vault_root)
+    settings = AppSettings.load(current_vault_root())
     return settings.model_dump()
 
 
 @app.post("/api/settings")
 def post_settings(settings: AppSettings, background_tasks: BackgroundTasks) -> dict:
-    previous_settings = AppSettings.load(state.vault_root) if state.vault_root else None
+    previous_vault_root = current_vault_root()
+    previous_settings = AppSettings.load(previous_vault_root) if previous_vault_root else None
     if settings.vault_path:
         vault = initialize_vault(settings.vault_path)
         state.vault_root = vault.root
     vault_root = require_vault()
     settings.save(vault_root)
+    save_last_vault_path(vault_root)
     if previous_settings and embedding_signature(previous_settings) != embedding_signature(settings):
         background_tasks.add_task(background_refresh_index, vault_root)
     return AppSettings.load(vault_root).model_dump()
@@ -166,7 +205,7 @@ def post_settings(settings: AppSettings, background_tasks: BackgroundTasks) -> d
 
 @app.get("/api/provider-models/openrouter")
 def get_openrouter_models(capability: Literal["chat", "embedding"]) -> dict:
-    settings = AppSettings.load(state.vault_root)
+    settings = AppSettings.load(current_vault_root())
     suffix = "/models" if capability == "chat" else "/embeddings/models"
     api_key = openrouter_catalog_api_key(settings)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
@@ -190,7 +229,8 @@ def get_openrouter_models(capability: Literal["chat", "embedding"]) -> dict:
 def select_vault(request: SelectVaultRequest) -> dict:
     vault = initialize_vault(request.path)
     state.vault_root = vault.root
-    return {"path": str(vault.root)}
+    save_last_vault_path(vault.root)
+    return {"path": str(vault.root), "settings": AppSettings.load(vault.root).model_dump()}
 
 
 @app.post("/api/vault/scan")

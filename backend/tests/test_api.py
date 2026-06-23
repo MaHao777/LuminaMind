@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 from threading import Event, Lock
 
+import httpx
 from fastapi.testclient import TestClient
 
 import main
@@ -22,6 +23,30 @@ def test_health_endpoint_is_available_before_vault_selection() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_settings_restores_last_selected_vault(tmp_path: Path, monkeypatch) -> None:
+    state_path = tmp_path / "app-state.json"
+    vault_path = tmp_path / "remembered-vault"
+    previous_vault = main.state.vault_root
+    monkeypatch.setenv("LUMINAMIND_APP_STATE_PATH", str(state_path))
+
+    try:
+        main.state.vault_root = None
+        client = TestClient(app)
+
+        selected = client.post("/api/vault/select", json={"path": str(vault_path)})
+        assert selected.status_code == 200
+        assert state_path.exists()
+
+        main.state.vault_root = None
+        restored = client.get("/api/settings")
+
+        assert restored.status_code == 200
+        assert restored.json()["vault_path"] == str(vault_path)
+        assert main.state.vault_root == vault_path.resolve()
+    finally:
+        main.state.vault_root = previous_vault
 
 
 def test_packaged_file_origin_can_call_backend() -> None:
@@ -298,6 +323,22 @@ def test_rebuild_reports_missing_openrouter_embedding_key_as_configuration_error
 
     assert response.status_code == 400
     assert "API key" in response.json()["detail"]
+
+
+def test_rebuild_reports_embedding_provider_connection_failures(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "unavailable-embedding-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+
+    def fail_rebuild(*args, **kwargs):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(main, "rebuild_index", fail_rebuild)
+
+    response = client.post("/api/index/rebuild")
+
+    assert response.status_code == 502
+    assert "Embedding provider is unavailable" in response.json()["detail"]
 
 
 def test_chat_model_override_routes_answer_and_memory_generation_through_selected_chat_model(

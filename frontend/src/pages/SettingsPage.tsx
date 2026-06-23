@@ -255,6 +255,8 @@ export function SettingsPage({
 
   async function initializeVault() {
     setError("");
+    setStatus("");
+    setRetryIndexRefresh(false);
     const chooseVaultDirectory = window.luminaDesktop?.chooseVaultDirectory;
     if (!chooseVaultDirectory) {
       setError(t("settings.vaultDesktopOnly"));
@@ -264,16 +266,28 @@ export function SettingsPage({
       const chosenPath = await chooseVaultDirectory();
       if (!chosenPath) return;
       const selected = await selectVault(chosenPath);
-      const scan = await scanVault();
-      const index = await rebuildIndex();
-      const nextForm = { ...form, vault_path: selected.path };
+      const nextForm = selected.settings ?? { ...form, vault_path: selected.path };
       setForm(nextForm);
-      setStatus(t("settings.vaultReady", {
-        path: selected.path,
-        notes: scan.indexed_notes,
-        chunks: index.indexed_chunks,
-      }));
       onSettingsChange(nextForm);
+      const scan = await scanVault();
+      try {
+        const index = await rebuildIndex();
+        setStatus(t("settings.vaultReady", {
+          path: selected.path,
+          notes: scan.indexed_notes,
+          chunks: index.indexed_chunks,
+        }));
+      } catch (err) {
+        setRetryIndexRefresh(true);
+        setStatus(t("settings.vaultReady", {
+          path: selected.path,
+          notes: scan.indexed_notes,
+          chunks: 0,
+        }));
+        setError(err instanceof Error
+          ? t("settings.indexRebuildFailed", { message: err.message })
+          : t("settings.indexRebuildFailedGeneric"));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("settings.failedInitializeVault"));
     }

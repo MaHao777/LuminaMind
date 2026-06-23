@@ -71,6 +71,96 @@ npm test -- --run
 npm run build
 ```
 
+### 桌面应用端测试与重新构建流程
+
+如果本次改动需要在真实 Electron 应用窗口里验证，不要只看浏览器页面。按改动类型选择下面一种流程。
+
+#### A. 日常应用端调试：开发壳
+
+适合验证前端交互、后端 API、设置页、选仓库、聊天、记忆审查等功能。这个流程不生成安装包，但运行的是 Electron 桌面壳。
+
+```powershell
+# 1. 关闭旧的 8000/5173 监听，避免旧后端或旧 Vite 进程干扰
+$ports = 8000, 5173
+foreach ($port in $ports) {
+  $pids = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($processId in $pids) {
+    if ($processId) { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
+  }
+}
+Start-Sleep -Seconds 1
+
+# 2. 终端一：启动后端
+cd D:\VS_project\LuminaMind\backend
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+# 3. 终端二：启动前端开发服务器
+cd D:\VS_project\LuminaMind\frontend
+npm run dev -- --host 127.0.0.1 --port 5173
+
+# 4. 终端三：启动 Electron 桌面壳
+cd D:\VS_project\LuminaMind\frontend
+npm run electron:dev
+```
+
+应用打开后，在桌面窗口里完成手动验证。选过的 Vault 会记录在用户级应用状态里；如果要模拟第一次启动，可先关闭应用并删除：
+
+```powershell
+Remove-Item "$env:APPDATA\LuminaMind\state.json" -Force -ErrorAction SilentlyContinue
+```
+
+#### B. 重新构建桌面应用：免安装包
+
+适合每次代码改完后做“接近真实发布”的应用端测试。这个流程会构建前端、打包后端，并生成可直接运行的 Electron 应用目录，不需要安装。
+
+首次使用 `dist:dir` 或 `dist:win` 前，确保 `pnpm` 可用，因为脚本内部会通过 `pnpm dlx electron-builder` 调用 Electron Builder。可用下面任一方式准备：
+
+```powershell
+corepack enable
+# 或
+npm install -g pnpm
+```
+
+```powershell
+cd D:\VS_project\LuminaMind\frontend
+npm run dist:dir
+
+# 构建完成后运行
+.\release\win-unpacked\LuminaMind.exe
+```
+
+优先用 `dist:dir` 做频繁测试，因为它比安装包快，也不会反复改系统安装状态。
+
+#### C. 测试安装包
+
+只有需要验证安装、卸载、桌面入口、安装目录等发布行为时，才构建安装包。
+
+```powershell
+cd D:\VS_project\LuminaMind\frontend
+npm run dist:win
+
+# 构建完成后运行 release 目录里的安装包
+.\release\LuminaMind-0.1.0-Setup.exe
+```
+
+版本号来自 `frontend/package.json`。如果版本号改了，安装包文件名也会跟着变。
+
+#### 每次改完后的最低验证顺序
+
+```powershell
+# 后端自动测试
+cd D:\VS_project\LuminaMind\backend
+.\.venv\Scripts\python.exe -m pytest tests -v
+
+# 前端测试与类型/构建检查
+cd D:\VS_project\LuminaMind\frontend
+npm test -- --run
+npm run build
+
+# 然后根据需要进入 A 或 B，在 Electron 应用窗口里手动测试
+```
+
 ---
 
 ## 3. 核心设计

@@ -317,6 +317,23 @@ describe("LuminaMind MVP frontend", () => {
     expect(api.rebuildIndex).toHaveBeenCalled();
   });
 
+  it("keeps the selected vault visible when index rebuild fails", async () => {
+    const chooseVaultDirectory = vi.fn(async () => "D:/picked-vault");
+    Object.defineProperty(window, "luminaDesktop", {
+      configurable: true,
+      value: { chooseVaultDirectory },
+    });
+    vi.mocked(api.rebuildIndex).mockRejectedValueOnce(new Error("Embedding provider is unavailable."));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select vault" }));
+
+    expect(await screen.findByDisplayValue("D:/picked-vault")).toBeInTheDocument();
+    expect(await screen.findByText("Index rebuild failed: Embedding provider is unavailable.")).toBeInTheDocument();
+    expect(api.scanVault).toHaveBeenCalled();
+  });
+
   it("requires the desktop app for vault directory selection", async () => {
     render(<App />);
 
