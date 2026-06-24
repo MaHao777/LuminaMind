@@ -8,15 +8,19 @@
     "electron:dev": "wait-on http://127.0.0.1:5173 && electron electron/main.cjs",
     "build": "tsc --noEmit && vite build",
     "build:backend": "cd ../backend && .\\.venv\\Scripts\\python.exe -m PyInstaller pyinstaller/LuminaMindBackend.spec --noconfirm --clean",
-    "dist:dir": "npm run build && npm run build:backend && pnpm dlx electron-builder@24.13.3 --dir",
-    "dist:win": "npm run build && npm run build:backend && pnpm dlx electron-builder@24.13.3 --win nsis && node scripts/write-sha256.cjs",
-    "test": "vitest --environment jsdom"
+    "dist:dir": "npm run build && npm run build:backend && pnpm dlx electron-builder@26.15.3 --dir",
+    "dist:win": "npm run build && npm run build:backend && pnpm dlx electron-builder@26.15.3 --win nsis && node scripts/write-sha256.cjs",
+    "test": "vitest --environment jsdom",
+    "test:packaging": "node scripts/verify-app-icon.cjs"
   },
   "build": {
     "appId": "com.luminamind.agent",
     "productName": "LuminaMind",
     "directories": {
       "output": "release"
+    },
+    "toolsets": {
+      "winCodeSign": "1.1.0"
     },
     "files": [
       "dist/**/*",
@@ -33,6 +37,7 @@
       }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -42,13 +47,15 @@
         }
       ],
       "artifactName": "LuminaMind-${version}-Setup.${ext}",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     }
   },
   "dependencies": {
