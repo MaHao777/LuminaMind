@@ -110,9 +110,9 @@ npm run electron:dev
 Remove-Item "$env:APPDATA\LuminaMind\state.json" -Force -ErrorAction SilentlyContinue
 ```
 
-#### B. 重新构建桌面应用：免安装包
+#### B. 重新构建桌面应用：免安装目录版
 
-适合每次代码改完后做“接近真实发布”的应用端测试。这个流程会构建前端、打包后端，并生成可直接运行的 Electron 应用目录，不需要安装。
+适合每次代码改完后做“接近真实发布”的应用端测试。这个流程会构建前端、打包后端，并生成可直接运行的 Electron 应用目录，不需要安装。它不是单文件 Portable EXE，运行和分发时必须保留整个 `release\win-unpacked` 目录。
 
 首次使用 `dist:dir` 或 `dist:win` 前，确保 `pnpm` 可用，因为脚本内部会通过 `pnpm dlx electron-builder` 调用 Electron Builder。可用下面任一方式准备：
 
@@ -124,11 +124,27 @@ npm install -g pnpm
 
 ```powershell
 cd D:\VS_project\LuminaMind\frontend
+
+# 构建前必须关闭 Vite 开发服务器，否则 Windows 文件监听可能锁住
+# release\win-unpacked.tmp，导致 electron-builder 报 EPERM rename 错误
+$pids = Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue |
+  Select-Object -ExpandProperty OwningProcess -Unique
+foreach ($processId in $pids) {
+  if ($processId) { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
+}
+
+# 同时关闭正在运行的旧免安装版，并清理失败构建留下的目录
+Get-Process LuminaMind -ErrorAction SilentlyContinue | Stop-Process -Force
+Remove-Item .\release\win-unpacked, .\release\win-unpacked.tmp `
+  -Recurse -Force -ErrorAction SilentlyContinue
+
 npm run dist:dir
 
 # 构建完成后运行
 .\release\win-unpacked\LuminaMind.exe
 ```
+
+如果只看到 `release\win-unpacked.tmp\electron.exe` 和 `resources\default_app.asar`，说明构建停在原始 Electron 运行时解压阶段，并未生成 LuminaMind 应用。不要运行或分发这个 `electron.exe`；先关闭 5173、清理 `.tmp` 目录，再重新执行 `npm run dist:dir`。
 
 优先用 `dist:dir` 做频繁测试，因为它比安装包快，也不会反复改系统安装状态。
 

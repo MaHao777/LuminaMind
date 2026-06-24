@@ -155,12 +155,13 @@ def test_api_updates_and_deletes_memory_files(tmp_path: Path) -> None:
             "importance": 3,
         },
     ).json()
+    assert Path(created["path"]).parent == vault_path / "Memories" / "Concepts"
 
     updated = client.put(
         f"/api/memories/{created['id']}",
         json={
             "title": "新标题",
-            "type": "concept",
+            "type": "task",
             "content": "新内容包含双链 [[长期记忆]]。",
             "tags": ["更新"],
             "importance": 4,
@@ -169,6 +170,9 @@ def test_api_updates_and_deletes_memory_files(tmp_path: Path) -> None:
     )
     assert updated.status_code == 200
     assert updated.json()["title"] == "新标题"
+    assert updated.json()["type"] == "task"
+    assert updated.json()["path"] == created["path"]
+    assert Path(created["path"]).exists()
     indexed = client.post("/api/index/rebuild")
     assert indexed.status_code == 200
     assert load_vectors(vault_path)

@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { generateSuggestions, listConversations, sendChat } from "../services/api";
+import {
+  createMemory,
+  generateSuggestions,
+  listConversations,
+  sendChat,
+  updateMemory,
+  type MemoryWritePayload,
+} from "../services/api";
 
 describe("API error messages", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.luminaDesktop = undefined;
   });
 
   it("uses a FastAPI detail message for failed chat requests", async () => {
@@ -81,6 +89,46 @@ describe("API error messages", () => {
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
       conversation_id: "conv_1",
       chat_model_id: "ollama-chat",
+    });
+  });
+
+  it("creates and updates memories with the shared write payload", async () => {
+    const payload: MemoryWritePayload = {
+      title: "Editable memory",
+      type: "project",
+      content: "Markdown body",
+      tags: ["alpha"],
+      importance: 4,
+      confidence: 0.8,
+      source: "manual",
+      status: "active",
+      links: ["Related note"],
+    };
+    const memory = {
+      id: "mem_1",
+      ...payload,
+      pinned: false,
+      created: "2026-06-24",
+      updated: "2026-06-24",
+      path: "D:/memory/Memories/Projects/editable-memory.md",
+    };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(memory), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(memory), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await createMemory(payload);
+    await updateMemory("mem_1", payload);
+
+    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:8000/api/memories");
+    expect(fetch.mock.calls[0][1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    expect(fetch.mock.calls[1][0]).toBe("http://127.0.0.1:8000/api/memories/mem_1");
+    expect(fetch.mock.calls[1][1]).toMatchObject({
+      method: "PUT",
+      body: JSON.stringify(payload),
     });
   });
 });

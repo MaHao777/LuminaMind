@@ -25,7 +25,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -54,7 +55,8 @@ button.secondary {
 }
 
 input,
-select {
+select,
+textarea {
   min-height: 38px;
   width: 100%;
   border: 1px solid #c7d0d9;
@@ -62,6 +64,11 @@ select {
   padding: 0 10px;
   background: #fff;
   color: #1d2329;
+}
+
+textarea {
+  resize: vertical;
+  padding: 10px;
 }
 
 h1,
@@ -1018,6 +1025,69 @@ p {
   margin-bottom: 0;
 }
 
+.panel-actions,
+.memory-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.memory-detail {
+  min-height: 0;
+}
+
+.memory-editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  min-height: 100%;
+}
+
+.memory-editor-header h2 {
+  margin: 0;
+}
+
+.memory-editor-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+}
+
+.memory-editor-fields label,
+.memory-editor-fields .animated-select-field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ui-muted);
+  font-size: 13px;
+}
+
+.memory-editor-fields .animated-select-label {
+  font-weight: 400;
+}
+
+.memory-content-field {
+  grid-column: 1 / -1;
+  min-height: 360px;
+}
+
+.memory-content-field textarea {
+  min-height: 360px;
+  height: 100%;
+  resize: vertical;
+  line-height: 1.55;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;
@@ -1587,7 +1657,8 @@ pre {
 }
 
 .app-shell input,
-.app-shell select {
+.app-shell select,
+.app-shell textarea {
   border-color: var(--ui-border);
   background: var(--ui-input);
   color: var(--ui-text);
@@ -2159,6 +2230,14 @@ pre {
   .settings-grid {
     grid-template-columns: 1fr !important;
     grid-template-rows: minmax(180px, auto) minmax(320px, 1fr);
+  }
+
+  .memory-editor-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-content-field {
+    grid-column: auto;
   }
 
   .split-grid > .resizable-splitter,

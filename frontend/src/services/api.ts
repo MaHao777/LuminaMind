@@ -2,6 +2,8 @@ export type LlmProvider = "deepseek" | "ollama";
 export type ReviewMode = "manual" | "auto";
 export type ModelProvider = "deepseek" | "ollama" | "openrouter" | "local_hash";
 export type ModelCapability = "chat" | "embedding";
+export type MemoryType = "profile" | "project" | "concept" | "task" | "log";
+export type MemoryStatus = "active" | "outdated" | "archived";
 
 export type ConfiguredModel = {
   id: string;
@@ -33,18 +35,30 @@ export type AppSettings = {
 export type MemoryNote = {
   id: string;
   title: string;
-  type: string;
+  type: MemoryType;
   content: string;
   tags: string[];
   importance: number;
   confidence: number;
-  status: string;
+  status: MemoryStatus;
   pinned: boolean;
   source: string;
   created: string;
   updated: string;
   links: string[];
   path: string;
+};
+
+export type MemoryWritePayload = {
+  title: string;
+  type: MemoryType;
+  content: string;
+  tags: string[];
+  importance: number;
+  confidence: number;
+  source: string;
+  status: MemoryStatus;
+  links: string[];
 };
 
 export type ScanSummary = {
@@ -195,6 +209,20 @@ export function updateIndexDeduped() {
 
 export function listMemories() {
   return request<{ memories: MemoryNote[] }>("/api/memories");
+}
+
+export function createMemory(payload: MemoryWritePayload) {
+  return request<MemoryNote>("/api/memories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateMemory(id: string, payload: MemoryWritePayload) {
+  return request<MemoryNote>(`/api/memories/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function deleteMemory(id: string) {

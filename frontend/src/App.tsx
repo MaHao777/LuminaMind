@@ -67,6 +67,7 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
   const [theme, setTheme] = useState<ThemeId>(() => loadTheme());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => loadSidebarCollapsed());
   const [showScrollbars, setShowScrollbars] = useState(() => loadShowScrollbars());
+  const [memoryEditorDirty, setMemoryEditorDirty] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     loadLayoutNumber("sidebarWidth", SIDEBAR_WIDTH.default, SIDEBAR_WIDTH.min, SIDEBAR_WIDTH.max),
   );
@@ -122,6 +123,19 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
     saveLayoutNumber("sidebarWidth", width, SIDEBAR_WIDTH.min, SIDEBAR_WIDTH.max);
   }
 
+  function navigateToPage(nextPage: Page) {
+    if (nextPage === page) return;
+    if (
+      page === "memory"
+      && memoryEditorDirty
+      && !window.confirm(t("memory.unsavedConfirm"))
+    ) {
+      return;
+    }
+    setMemoryEditorDirty(false);
+    setPage(nextPage);
+  }
+
   const shellStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
   } as CSSProperties;
@@ -165,7 +179,7 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
                   ? t("app.pendingReviewNav", { count: pendingSuggestionCount })
                   : label}
                 className={page === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => setPage(item.id)}
+                onClick={() => navigateToPage(item.id)}
               >
                 <Icon size={18} aria-hidden />
                 <span className="nav-label">{label}</span>
@@ -204,7 +218,7 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
           pendingSuggestionCount={pendingSuggestionCount}
           onSuggestionsChanged={refreshPendingSuggestions}
         />
-        {page === "memory" ? <MemoryPage /> : null}
+        {page === "memory" ? <MemoryPage onDirtyChange={setMemoryEditorDirty} /> : null}
         {page === "review" ? (
           <ReviewPage suggestions={suggestions} onSuggestionsChanged={refreshPendingSuggestions} />
         ) : null}

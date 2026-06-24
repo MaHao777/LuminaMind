@@ -9,7 +9,7 @@ import * as api from "../services/api";
 
 const stylesCss = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf-8");
 
-const sampleMemory = {
+const sampleMemory: api.MemoryNote = {
   id: "mem_1",
   title: "LuminaMind 技术路线",
   type: "project",
@@ -56,6 +56,17 @@ vi.mock("../services/api", () => ({
   updateIndexDeduped: vi.fn(async () => ({ indexed_chunks: 1 })),
   listOpenRouterModels: vi.fn(async () => ({ models: [{ id: "openai/gpt-4.1-mini", name: "GPT 4.1 Mini" }] })),
   listMemories: vi.fn(async () => ({ memories: [sampleMemory] })),
+  createMemory: vi.fn(async (payload) => ({
+    ...sampleMemory,
+    ...payload,
+    id: "mem_created",
+    path: "Memories/Concepts/created.md",
+  })),
+  updateMemory: vi.fn(async (id: string, payload) => ({
+    ...sampleMemory,
+    ...payload,
+    id,
+  })),
   deleteMemory: vi.fn(async () => ({ deleted: true })),
   updateMemoryPin: vi.fn(async (id: string, pinned: boolean) => ({ ...sampleMemory, id, pinned })),
   listConversations: vi.fn(async () => ({
@@ -509,6 +520,195 @@ describe("LuminaMind MVP frontend", () => {
 
     fireEvent.change(screen.getByLabelText("Search memories"), { target: { value: "project" } });
     expect(await screen.findByText("No memories match your filters.")).toBeInTheDocument();
+  });
+
+  it("creates a memory from the detail editor and normalizes comma-separated tags", async () => {
+    const createdMemory: api.MemoryNote = {
+      ...sampleMemory,
+      id: "mem_created",
+      title: "New editable memory",
+      type: "task",
+      content: "# New body",
+      tags: ["alpha", "beta", "gamma"],
+      importance: 3,
+      path: "Memories/Tasks/new-editable-memory.md",
+    };
+    vi.mocked(api.createMemory).mockResolvedValueOnce(createdMemory);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    await chooseSelectOption("Filter memories by type", "profile");
+    fireEvent.change(screen.getByLabelText("Search memories"), { target: { value: "hidden-by-filter" } });
+    fireEvent.click(await screen.findByRole("button", { name: "New memory" }));
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "New editable memory" } });
+    await chooseSelectOption("Memory type", "task");
+    fireEvent.change(screen.getByLabelText("Memory tags"), {
+      target: { value: " alpha，beta, alpha, ,gamma " },
+    });
+    fireEvent.change(screen.getByLabelText("Markdown content"), { target: { value: "# New body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    await waitFor(() => expect(api.createMemory).toHaveBeenCalledWith({
+      title: "New editable memory",
+      type: "task",
+      content: "# New body",
+      tags: ["alpha", "beta", "gamma"],
+      importance: 3,
+      confidence: 0.9,
+      source: "manual",
+      status: "active",
+      links: [],
+    }));
+    expect(await screen.findByRole("heading", { level: 2, name: "New editable memory" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New editable memory" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Search memories")).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Filter memories by type" })).toHaveTextContent("All types");
+    expect(api.updateIndexDeduped).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a title before creating a memory", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New memory" }));
+    fireEvent.change(screen.getByLabelText("Markdown content"), { target: { value: "Body without title" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    expect(await screen.findByText("Memory title is required.")).toBeInTheDocument();
+    expect(api.createMemory).not.toHaveBeenCalled();
+  });
+
+  it("prefills the editor and preserves hidden metadata when updating a memory", async () => {
+    const updatedMemory: api.MemoryNote = {
+      ...sampleMemory,
+      title: "Edited title",
+      type: "concept",
+      content: "Edited body",
+      tags: ["updated"],
+    };
+    vi.mocked(api.updateMemory).mockResolvedValueOnce(updatedMemory);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit memory" }));
+    expect(screen.getByLabelText("Memory title")).toHaveValue(sampleMemory.title);
+    expect(screen.getByLabelText("Memory tags")).toHaveValue("Agent");
+    expect(screen.getByLabelText("Markdown content")).toHaveValue(sampleMemory.content);
+
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "Edited title" } });
+    await chooseSelectOption("Memory type", "concept");
+    fireEvent.change(screen.getByLabelText("Memory tags"), { target: { value: "updated" } });
+    fireEvent.change(screen.getByLabelText("Markdown content"), { target: { value: "Edited body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    await waitFor(() => expect(api.updateMemory).toHaveBeenCalledWith("mem_1", {
+      title: "Edited title",
+      type: "concept",
+      content: "Edited body",
+      tags: ["updated"],
+      importance: 5,
+      confidence: 0.9,
+      source: "manual",
+      status: "active",
+      links: sampleMemory.links,
+    }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Edited title" })).toBeInTheDocument();
+  });
+
+  it("cancels memory editing without saving changes", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit memory" }));
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "Discarded title" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel editing" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: sampleMemory.title })).toBeInTheDocument();
+    expect(api.updateMemory).not.toHaveBeenCalled();
+  });
+
+  it("protects unsaved edits when selecting another memory or leaving the memory page", async () => {
+    const otherMemory = {
+      ...sampleMemory,
+      id: "mem_2",
+      title: "Other memory",
+      path: "Memories/Projects/other.md",
+    };
+    vi.mocked(api.listMemories).mockResolvedValueOnce({ memories: [sampleMemory, otherMemory] });
+    const confirm = vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit memory" }));
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "Unsaved title" } });
+    fireEvent.click(screen.getByRole("button", { name: "Other memory" }));
+
+    expect(screen.getByLabelText("Memory title")).toHaveValue("Unsaved title");
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(await screen.findByPlaceholderText("Ask LuminaMind...")).toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+
+  it("keeps unsaved protection active when the current memory navigation is clicked again", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit memory" }));
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "Still unsaved" } });
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+
+    expect(screen.getByLabelText("Memory title")).toHaveValue("Still unsaved");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    confirm.mockRestore();
+  });
+
+  it("prevents duplicate saves while a memory write is in progress", async () => {
+    let resolveUpdate: ((memory: typeof sampleMemory) => void) | undefined;
+    vi.mocked(api.updateMemory).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveUpdate = resolve;
+    }));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit memory" }));
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "Saving title" } });
+    const saveButton = screen.getByRole("button", { name: "Save memory" });
+    fireEvent.click(saveButton);
+
+    expect(saveButton).toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(api.updateMemory).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveUpdate?.({ ...sampleMemory, title: "Saving title" });
+      await Promise.resolve();
+    });
+  });
+
+  it("keeps saved memory visible when index refresh fails and allows retrying it", async () => {
+    const updatedMemory = { ...sampleMemory, title: "Saved before index failure" };
+    vi.mocked(api.updateMemory).mockResolvedValueOnce(updatedMemory);
+    vi.mocked(api.updateIndexDeduped)
+      .mockRejectedValueOnce(new Error("Embedding offline"))
+      .mockResolvedValueOnce({ indexed_chunks: 2 });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit memory" }));
+    fireEvent.change(screen.getByLabelText("Memory title"), { target: { value: "Saved before index failure" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Saved before index failure" })).toBeInTheDocument();
+    expect(await screen.findByText("Memory saved, but index update failed: Embedding offline")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry index update" }));
+
+    await waitFor(() => expect(api.updateIndexDeduped).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Memory saved and index updated.")).toBeInTheDocument();
   });
 
   it("opens the memory context menu, pins a note, and displays its pinned state", async () => {
