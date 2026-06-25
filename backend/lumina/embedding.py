@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -13,6 +15,10 @@ from .config import AppSettings
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+OPENROUTER_BATCH_SIZE = 16
+OPENROUTER_MAX_ATTEMPTS = 3
+OPENROUTER_RETRYABLE_STATUS_CODES = {429, 502, 503}
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingProvider(Protocol):
@@ -70,15 +76,75 @@ class OpenRouterEmbeddingProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
             raise EmbeddingConfigurationError("API key is not configured for the selected embedding model.")
+        embeddings: list[list[float]] = []
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                f"{self.base_url}/embeddings",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={"model": self.model, "input": texts},
-            )
-            response.raise_for_status()
+            for start in range(0, len(texts), OPENROUTER_BATCH_SIZE):
+                embeddings.extend(self._embed_batch(client, texts[start : start + OPENROUTER_BATCH_SIZE]))
+        return embeddings
+
+    def _embed_batch(self, client: httpx.Client, texts: list[str]) -> list[list[float]]:
+        for attempt in range(OPENROUTER_MAX_ATTEMPTS):
+            try:
+                response = client.post(
+                    f"{self.base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={"model": self.model, "input": texts},
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                message = http_response_error_message(exc.response)
+                logger.warning(
+                    "OpenRouter embedding request failed for model %s with HTTP %s: %s",
+                    self.model,
+                    status_code,
+                    message,
+                )
+                if status_code not in OPENROUTER_RETRYABLE_STATUS_CODES or attempt + 1 >= OPENROUTER_MAX_ATTEMPTS:
+                    raise
+                time.sleep(retry_delay_seconds(exc.response, attempt))
+                continue
+            except httpx.RequestError:
+                logger.warning(
+                    "OpenRouter embedding request transport failure for model %s on attempt %s",
+                    self.model,
+                    attempt + 1,
+                    exc_info=True,
+                )
+                if attempt + 1 >= OPENROUTER_MAX_ATTEMPTS:
+                    raise
+                time.sleep(float(2**attempt))
+                continue
             payload = response.json()["data"]
-        return [item["embedding"] for item in payload]
+            return [item["embedding"] for item in payload]
+        raise RuntimeError("OpenRouter embedding retry loop exited unexpectedly.")
+
+
+def http_response_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"]
+        if isinstance(error, str):
+            return error
+        if isinstance(payload.get("detail"), str):
+            return payload["detail"]
+    text = response.text.strip()
+    return text[:500] if text else response.reason_phrase
+
+
+def retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return max(0.0, min(float(retry_after), 30.0))
+        except ValueError:
+            pass
+    return float(min(2**attempt, 8))
 
 
 def provider_from_settings(settings: AppSettings | None) -> EmbeddingProvider:

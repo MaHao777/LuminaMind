@@ -1,3 +1,5 @@
+import { trackIndexActivity } from "./indexActivity";
+
 export type LlmProvider = "deepseek" | "ollama";
 export type ReviewMode = "manual" | "auto";
 export type ModelProvider = "deepseek" | "ollama" | "openrouter" | "local_hash";
@@ -28,6 +30,8 @@ export type AppSettings = {
   configured_models: ConfiguredModel[];
   chat_model_id: string;
   embedding_model_id: string;
+  retrieval_min_similarity: number;
+  retrieval_candidate_limit: number;
   chat_context_window_tokens: number | null;
   chat_max_output_tokens: number;
 };
@@ -46,6 +50,7 @@ export type MemoryNote = {
   created: string;
   updated: string;
   links: string[];
+  backlinks?: string[];
   path: string;
 };
 
@@ -116,6 +121,7 @@ export type MemorySuggestion = {
   importance: number;
   confidence: number;
   target_note_id: string | null;
+  links?: string[];
   reason: string;
   status: "pending" | "processing" | "accepted" | "rejected";
 };
@@ -183,7 +189,7 @@ export function scanVault() {
 }
 
 export function rebuildIndex() {
-  return request<IndexSummary>("/api/index/rebuild", { method: "POST" });
+  return trackIndexActivity(request<IndexSummary>("/api/index/rebuild", { method: "POST" }));
 }
 
 export function listOpenRouterModels(capability: ModelCapability) {
@@ -193,7 +199,7 @@ export function listOpenRouterModels(capability: ModelCapability) {
 }
 
 export function updateIndex() {
-  return request<IndexSummary>("/api/index/update", { method: "POST" });
+  return trackIndexActivity(request<IndexSummary>("/api/index/update", { method: "POST" }));
 }
 
 let pendingIndexUpdate: Promise<IndexSummary> | null = null;
@@ -288,4 +294,11 @@ export function acceptSuggestion(id: string) {
 
 export function rejectSuggestion(id: string) {
   return request<MemorySuggestion>(`/api/memory-suggestions/${id}/reject`, { method: "POST" });
+}
+
+export function patchSuggestionLinks(id: string, links: string[]) {
+  return request<MemorySuggestion>(`/api/memory-suggestions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ links }),
+  });
 }

@@ -6,12 +6,12 @@ from threading import Lock
 from typing import Literal
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from lumina.app_state import load_last_vault_path, save_last_vault_path
 from lumina.config import AppSettings
-from lumina.embedding import EmbeddingConfigurationError, embedding_signature
+from lumina.embedding import EmbeddingConfigurationError, http_response_error_message
 from lumina.conversations import (
     add_message,
     create_conversation,
@@ -47,6 +47,7 @@ from lumina.models import (
     MemoryUpdate,
     RetrievalRequest,
     SelectVaultRequest,
+    SuggestionLinksUpdate,
     UsedMemory,
 )
 from lumina.retrieval import retrieve_memories
@@ -55,6 +56,7 @@ from lumina.suggestions import (
     generate_suggestions,
     list_suggestions,
     reject_suggestion,
+    update_suggestion_links,
     update_suggestion_status,
 )
 from lumina.vault import initialize_vault
@@ -138,7 +140,18 @@ def refresh_index_request(vault_root: Path, settings: AppSettings, scan_first: b
         return refresh_index(vault_root, settings, scan_first=scan_first)
     except EmbeddingConfigurationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        provider_name = (
+            "OpenRouter"
+            if settings.embedding_model().provider == "openrouter"
+            else "Embedding provider"
+        )
+        detail = f"{provider_name} HTTP {status_code}: {http_response_error_message(exc.response)}"
+        logger.warning("Embedding provider rejected index refresh: %s", detail)
+        raise HTTPException(status_code=status_code, detail=detail) from None
     except httpx.HTTPError:
+        logger.exception("Embedding provider transport failure during index refresh")
         raise HTTPException(
             status_code=502,
             detail=(
@@ -146,13 +159,6 @@ def refresh_index_request(vault_root: Path, settings: AppSettings, scan_first: b
                 "and reachable, or switch the embedding model to Local Hash in Settings."
             ),
         ) from None
-
-
-def background_refresh_index(vault_root: Path) -> None:
-    try:
-        refresh_index(vault_root, AppSettings.load(vault_root), scan_first=True)
-    except Exception:
-        logger.exception("Background index refresh failed for %s", vault_root)
 
 
 def chat_memory_index_refresh_required(vault_root: Path, settings: AppSettings) -> bool:
@@ -189,17 +195,13 @@ def get_settings() -> dict:
 
 
 @app.post("/api/settings")
-def post_settings(settings: AppSettings, background_tasks: BackgroundTasks) -> dict:
-    previous_vault_root = current_vault_root()
-    previous_settings = AppSettings.load(previous_vault_root) if previous_vault_root else None
+def post_settings(settings: AppSettings) -> dict:
     if settings.vault_path:
         vault = initialize_vault(settings.vault_path)
         state.vault_root = vault.root
     vault_root = require_vault()
     settings.save(vault_root)
     save_last_vault_path(vault_root)
-    if previous_settings and embedding_signature(previous_settings) != embedding_signature(settings):
-        background_tasks.add_task(background_refresh_index, vault_root)
     return AppSettings.load(vault_root).model_dump()
 
 
@@ -441,6 +443,16 @@ def api_generate_suggestions(payload: GenerateSuggestionsRequest | None = None) 
 @app.get("/api/memory-suggestions")
 def api_list_suggestions() -> dict:
     return {"suggestions": [suggestion.model_dump() for suggestion in list_suggestions(require_vault())]}
+
+
+@app.patch("/api/memory-suggestions/{suggestion_id}")
+def api_update_suggestion_links(suggestion_id: str, payload: SuggestionLinksUpdate) -> dict:
+    try:
+        return update_suggestion_links(require_vault(), suggestion_id, payload.links).model_dump()
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Memory suggestion not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.post("/api/memory-suggestions/{suggestion_id}/accept")

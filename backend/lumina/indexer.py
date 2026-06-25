@@ -62,7 +62,6 @@ def _rebuild_index(
         notes = conn.execute("SELECT id, title, content FROM notes ORDER BY title").fetchall()
     for note in notes:
         parts = split_text(f"{note['title']}\n\n{note['content']}")
-        embeddings = provider.embed(parts) if parts else []
         for index, chunk_text in enumerate(parts):
             chunk_id = f"{note['id']}::chunk::{index}"
             vectors.append(
@@ -71,9 +70,15 @@ def _rebuild_index(
                     "note_id": note["id"],
                     "chunk_index": index,
                     "text": chunk_text,
-                    "embedding": embeddings[index],
                 }
             )
+    embeddings = provider.embed([item["text"] for item in vectors]) if vectors else []
+    if len(embeddings) != len(vectors):
+        raise ValueError(
+            f"Embedding provider returned {len(embeddings)} vectors for {len(vectors)} chunks."
+        )
+    for item, embedding in zip(vectors, embeddings, strict=True):
+        item["embedding"] = embedding
 
     with connect(vault_root) as conn:
         conn.execute("DELETE FROM chunks")
@@ -119,7 +124,15 @@ def _rebuild_index(
             client.delete_collection("memories")
         except Exception:
             pass
-        collection = client.get_or_create_collection("memories")
+        signature = embedding_signature(settings)
+        collection = client.create_collection(
+            "memories",
+            metadata={
+                "hnsw:space": "cosine",
+                "embedding_signature": signature,
+                "vector_count": len(vectors),
+            },
+        )
         if vectors:
             collection.add(
                 ids=[item["id"] for item in vectors],

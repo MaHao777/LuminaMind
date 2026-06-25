@@ -1061,6 +1061,30 @@ p {
   min-height: 0;
 }
 
+.memory-relations,
+.suggestion-links {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--ui-subtle);
+  color: var(--ui-text);
+}
+
+.memory-relations section {
+  display: grid;
+  gap: 7px;
+}
+
+.memory-relations strong,
+.suggestion-links > strong {
+  color: var(--ui-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .memory-editor-fields label,
 .memory-editor-fields .animated-select-field {
   display: grid;
@@ -1304,6 +1328,23 @@ pre {
 .model-settings-section h3 {
   margin: 0;
   font-size: 15px;
+}
+
+.retrieval-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.retrieval-settings-grid label {
+  color: var(--ui-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.retrieval-settings-grid input {
+  color: var(--ui-text);
+  background: var(--ui-panel);
 }
 
 .model-choice-card {
@@ -1600,6 +1641,108 @@ pre {
   --ui-titlebar-border: #d8ccb7;
   --ui-titlebar-hover: #e8decc;
   --ui-titlebar-text: #352f27;
+}
+
+.index-activity-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 11px;
+  width: min(360px, calc(100vw - 36px));
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  box-shadow: 0 12px 36px rgb(19 30 40 / 20%);
+  animation: index-activity-enter 180ms ease-out;
+}
+
+.index-activity-toast.running {
+  border-color: var(--ui-selected-border);
+  background: var(--ui-selected);
+}
+
+.index-activity-toast.success {
+  border-color: var(--ui-success-border);
+  background: var(--ui-success-bg);
+  color: var(--ui-success-text);
+}
+
+.index-activity-toast.error {
+  border-color: var(--ui-danger-border);
+  background: var(--ui-danger-bg);
+  color: var(--ui-danger-text);
+}
+
+.index-activity-icon {
+  display: inline-flex;
+  margin-top: 1px;
+  color: currentColor;
+}
+
+.index-activity-toast.running .index-activity-icon {
+  color: var(--ui-link);
+  animation: index-activity-spin 900ms linear infinite;
+}
+
+.index-activity-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.index-activity-copy strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.index-activity-copy > span {
+  overflow-wrap: anywhere;
+  color: currentColor;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.82;
+}
+
+.app-shell .index-activity-dismiss {
+  display: inline-grid;
+  width: 26px;
+  min-height: 26px;
+  place-items: center;
+  border-color: transparent;
+  border-radius: 7px;
+  padding: 0;
+  background: transparent;
+  color: currentColor;
+}
+
+.app-shell .index-activity-dismiss:hover,
+.app-shell .index-activity-dismiss:focus-visible {
+  border-color: var(--ui-border);
+  background: rgb(127 127 127 / 12%);
+  color: currentColor;
+}
+
+@keyframes index-activity-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes index-activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .app-shell[data-scrollbars="visible"],
@@ -2185,6 +2328,27 @@ pre {
   flex: 0 0 auto;
 }
 
+.suggestion-links-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.suggestion-links-editor label {
+  display: grid;
+  gap: 6px;
+  color: var(--ui-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.suggestion-links-editor input {
+  min-width: 0;
+  color: var(--ui-text);
+  background: var(--ui-panel);
+}
+
 .suggestion-meta {
   display: flex;
   flex-wrap: wrap;
@@ -2254,6 +2418,19 @@ pre {
 
 }
 
+@media (max-width: 700px) {
+  .index-activity-toast {
+    right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  .retrieval-settings-grid,
+  .suggestion-links-editor {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-shell,
   .chat-grid,
@@ -2277,6 +2454,11 @@ pre {
   .animated-select-listbox[data-state="closing"],
   .conversation-menu[data-state="closing"],
   .composer-model-menu[data-state="closing"] {
+    animation: none;
+  }
+
+  .index-activity-toast,
+  .index-activity-toast.running .index-activity-icon {
     animation: none;
   }
 }

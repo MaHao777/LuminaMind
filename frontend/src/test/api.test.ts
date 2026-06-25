@@ -4,13 +4,18 @@ import {
   createMemory,
   generateSuggestions,
   listConversations,
+  patchSuggestionLinks,
+  rebuildIndex,
   sendChat,
+  updateIndexDeduped,
   updateMemory,
   type MemoryWritePayload,
 } from "../services/api";
+import { dismissIndexActivity, getIndexActivityState } from "../services/indexActivity";
 
 describe("API error messages", () => {
   afterEach(() => {
+    dismissIndexActivity();
     vi.unstubAllGlobals();
     window.luminaDesktop = undefined;
   });
@@ -130,5 +135,49 @@ describe("API error messages", () => {
       method: "PUT",
       body: JSON.stringify(payload),
     });
+  });
+
+  it("patches pending suggestion links", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "sug_1", links: ["Target"], status: "pending" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await patchSuggestionLinks("sug_1", ["Target"]);
+
+    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:8000/api/memory-suggestions/sug_1");
+    expect(fetch.mock.calls[0][1]).toMatchObject({
+      method: "PATCH",
+      body: JSON.stringify({ links: ["Target"] }),
+    });
+  });
+
+  it("tracks rebuild requests and deduplicated update requests as global index activity", async () => {
+    let resolveRebuild!: (response: Response) => void;
+    let resolveUpdate!: (response: Response) => void;
+    const fetch = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveRebuild = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveUpdate = resolve;
+      }));
+    vi.stubGlobal("fetch", fetch);
+
+    const rebuild = rebuildIndex();
+    expect(getIndexActivityState()).toEqual({ status: "running" });
+    resolveRebuild(new Response(JSON.stringify({ indexed_chunks: 8 }), { status: 200 }));
+    await expect(rebuild).resolves.toEqual({ indexed_chunks: 8 });
+    expect(getIndexActivityState()).toEqual({ status: "success", indexedChunks: 8 });
+
+    const firstUpdate = updateIndexDeduped();
+    const secondUpdate = updateIndexDeduped();
+    expect(firstUpdate).toBe(secondUpdate);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(getIndexActivityState()).toEqual({ status: "running" });
+
+    resolveUpdate(new Response(JSON.stringify({ indexed_chunks: 11 }), { status: 200 }));
+    await expect(firstUpdate).resolves.toEqual({ indexed_chunks: 11 });
+    expect(getIndexActivityState()).toEqual({ status: "success", indexedChunks: 11 });
   });
 });

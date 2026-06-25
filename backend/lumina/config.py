@@ -48,6 +48,8 @@ class AppSettings(BaseModel):
     configured_models: list[ConfiguredModel] = Field(default_factory=list)
     chat_model_id: str = ""
     embedding_model_id: str = ""
+    retrieval_min_similarity: float = Field(default=0.35, ge=0.0, le=1.0)
+    retrieval_candidate_limit: int = Field(default=40, ge=1, le=200)
     chat_context_window_tokens: int | None = Field(default=None, ge=16_384)
     chat_max_output_tokens: int = Field(default=8_192, ge=1)
 

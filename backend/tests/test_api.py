@@ -71,6 +71,9 @@ def test_api_vault_scan_retrieve_chat_and_review_cycle(tmp_path: Path, monkeypat
     select_response = client.post("/api/vault/select", json={"path": str(vault_path)})
     assert select_response.status_code == 200
     assert select_response.json()["path"] == str(vault_path)
+    AppSettings.load(vault_path).model_copy(
+        update={"retrieval_min_similarity": 0.0}
+    ).save(vault_path)
 
     memory_response = client.post(
         "/api/memories",
@@ -343,6 +346,119 @@ def test_rebuild_reports_embedding_provider_connection_failures(tmp_path: Path, 
 
     assert response.status_code == 502
     assert "Embedding provider is unavailable" in response.json()["detail"]
+
+
+def test_rebuild_preserves_openrouter_status_and_error_message(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "openrouter-rate-limit-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    current = AppSettings.load(vault_path)
+    AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            current.chat_model(),
+            ConfiguredModel(
+                id="router-embedding",
+                name="Router embedding",
+                provider="openrouter",
+                capability="embedding",
+                model="qwen/qwen3-embedding-8b",
+                api_key="router-key",
+            ),
+        ],
+        chat_model_id=current.chat_model_id,
+        embedding_model_id="router-embedding",
+    ).save(vault_path)
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/embeddings")
+    provider_response = httpx.Response(
+        429,
+        json={"error": {"message": "Rate limit exceeded for this model"}},
+        request=request,
+    )
+
+    def fail_rebuild(*args, **kwargs):
+        raise httpx.HTTPStatusError("rate limited", request=request, response=provider_response)
+
+    monkeypatch.setattr(main, "rebuild_index", fail_rebuild)
+
+    response = client.post("/api/index/rebuild")
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "OpenRouter HTTP 429: Rate limit exceeded for this model"
+
+
+def test_rebuild_does_not_mislabel_other_embedding_providers_as_openrouter(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "ollama-provider-error-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    current = AppSettings.load(vault_path)
+    AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            current.chat_model(),
+            ConfiguredModel(
+                id="ollama-embedding",
+                name="Ollama embedding",
+                provider="ollama",
+                capability="embedding",
+                model="bge-m3",
+            ),
+        ],
+        chat_model_id=current.chat_model_id,
+        embedding_model_id="ollama-embedding",
+    ).save(vault_path)
+    request = httpx.Request("POST", "http://127.0.0.1:11434/api/embeddings")
+    provider_response = httpx.Response(
+        500,
+        json={"error": "model failed to load"},
+        request=request,
+    )
+
+    def fail_rebuild(*args, **kwargs):
+        raise httpx.HTTPStatusError("provider failed", request=request, response=provider_response)
+
+    monkeypatch.setattr(main, "rebuild_index", fail_rebuild)
+
+    response = client.post("/api/index/rebuild")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Embedding provider HTTP 500: model failed to load"
+
+
+def test_saving_embedding_settings_does_not_start_a_duplicate_background_rebuild(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "settings-rebuild-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    current = AppSettings.load(vault_path)
+    background_calls: list[Path] = []
+
+    def record_refresh(vault_root: Path, settings: AppSettings, scan_first: bool = False):
+        background_calls.append(vault_root)
+
+    monkeypatch.setattr(main, "refresh_index", record_refresh)
+    settings = AppSettings(
+        vault_path=str(vault_path),
+        configured_models=[
+            current.chat_model(),
+            ConfiguredModel(
+                id="router-embedding",
+                name="Router embedding",
+                provider="openrouter",
+                capability="embedding",
+                model="qwen/qwen3-embedding-8b",
+                api_key="router-key",
+            ),
+        ],
+        chat_model_id=current.chat_model_id,
+        embedding_model_id="router-embedding",
+    )
+
+    response = client.post("/api/settings", json=settings.model_dump())
+
+    assert response.status_code == 200
+    assert background_calls == []
 
 
 def test_chat_model_override_routes_answer_and_memory_generation_through_selected_chat_model(
@@ -942,6 +1058,127 @@ def test_empty_conversation_with_suggestion_is_not_pruned_as_a_draft(tmp_path: P
 
     conversations = client.get("/api/conversations").json()["conversations"]
     assert {item["id"] for item in conversations} == {"conv_review", "conv_new_blank"}
+
+
+def test_pending_suggestion_links_can_be_sanitized_patched_and_persisted(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "suggestion-links-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    target = client.post(
+        "/api/memories",
+        json={
+            "title": "Existing target",
+            "type": "concept",
+            "content": "Target content",
+            "importance": 3,
+        },
+    ).json()
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        title="New linked memory",
+        content="New content",
+    )
+
+    patched = client.patch(
+        f"/api/memory-suggestions/{suggestion.id}",
+        json={"links": ["Existing target", "Unknown title", "Existing target", "New linked memory"]},
+    )
+
+    assert patched.status_code == 200
+    assert patched.json()["links"] == ["Existing target"]
+
+    accepted = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+    assert accepted.status_code == 200
+    memories = {item["title"]: item for item in client.get("/api/memories").json()["memories"]}
+    assert memories["New linked memory"]["links"] == ["Existing target"]
+    assert memories["Existing target"]["id"] == target["id"]
+    assert memories["Existing target"]["backlinks"] == ["New linked memory"]
+
+    rejected_patch = client.patch(
+        f"/api/memory-suggestions/{suggestion.id}",
+        json={"links": []},
+    )
+    assert rejected_patch.status_code == 409
+
+
+def test_accepting_update_suggestion_merges_existing_and_suggested_links(tmp_path: Path) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "merge-suggestion-links-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    first_target = client.post(
+        "/api/memories",
+        json={"title": "First target", "type": "concept", "content": "First", "importance": 3},
+    ).json()
+    second_target = client.post(
+        "/api/memories",
+        json={"title": "Second target", "type": "concept", "content": "Second", "importance": 3},
+    ).json()
+    current = client.post(
+        "/api/memories",
+        json={
+            "title": "Existing memory",
+            "type": "project",
+            "content": "Original",
+            "importance": 3,
+            "links": ["First target"],
+        },
+    ).json()
+    suggestion = suggestions_module.create_suggestion(
+        vault_path,
+        conversation_id=None,
+        action="update",
+        title="Existing memory",
+        content="Updated",
+        note_type="project",
+        target_note_id=current["id"],
+        links=["Second target"],
+    )
+
+    accepted = client.post(f"/api/memory-suggestions/{suggestion.id}/accept")
+
+    assert accepted.status_code == 200
+    updated = next(
+        item for item in client.get("/api/memories").json()["memories"] if item["id"] == current["id"]
+    )
+    assert updated["links"] == ["First target", "Second target"]
+    assert first_target["id"] != second_target["id"]
+
+
+def test_generated_suggestion_keeps_only_valid_existing_memory_links(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(app)
+    vault_path = tmp_path / "generated-suggestion-links-vault"
+    client.post("/api/vault/select", json={"path": str(vault_path)})
+    client.post(
+        "/api/memories",
+        json={"title": "Valid target", "type": "concept", "content": "Target", "importance": 3},
+    )
+    monkeypatch.setattr(main, "generate_answer", lambda settings, message, memories, history: "answer")
+    monkeypatch.setattr(
+        suggestions_module,
+        "generate_memory_suggestion_drafts",
+        lambda *args: [{
+            "action": "create",
+            "title": "Generated memory",
+            "content": "Generated content",
+            "type": "project",
+            "tags": [],
+            "importance": 3,
+            "confidence": 0.8,
+            "target_note_id": None,
+            "links": ["Valid target", "Unknown target", "Generated memory", "Valid target"],
+            "reason": "Useful later",
+        }],
+    )
+    chat = client.post("/api/chat", json={"message": "Remember this relationship"}).json()
+
+    generated = client.post(
+        "/api/memory-suggestions/generate",
+        json={"conversation_id": chat["conversation_id"]},
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["suggestions"][0]["links"] == ["Valid target"]
 
 
 def test_delete_conversation_removes_messages_and_suggestions_but_keeps_accepted_memory(

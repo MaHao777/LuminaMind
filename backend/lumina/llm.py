@@ -136,6 +136,7 @@ def build_memory_extraction_prompt(
     "importance": 1,
     "confidence": 0.9,
     "target_note_id": null,
+    "links": ["已有记忆的准确标题"],
     "reason": "为什么值得保存或更新"
   }}
 ]
@@ -243,6 +244,12 @@ def _normalize_memory_draft(item: dict) -> dict | None:
     confidence = max(0.0, min(1.0, confidence))
 
     target_note_id = item.get("target_note_id")
+    links = item.get("links")
+    if not isinstance(links, list):
+        links = []
+    clean_links = list(
+        dict.fromkeys(str(link).strip() for link in links if str(link).strip())
+    )[:5]
     return {
         "action": action,
         "title": title or "忽略记忆",
@@ -252,6 +259,7 @@ def _normalize_memory_draft(item: dict) -> dict | None:
         "importance": importance,
         "confidence": confidence,
         "target_note_id": str(target_note_id).strip() if target_note_id else None,
+        "links": clean_links,
         "reason": str(item.get("reason") or "").strip(),
     }
 

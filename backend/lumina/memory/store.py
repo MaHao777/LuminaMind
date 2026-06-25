@@ -54,22 +54,48 @@ def _row_to_note(row) -> MemoryNote:
         created=row["created_at"] or "",
         updated=row["updated_at"] or "",
         links=[],
+        backlinks=[],
         path=row["path"],
         file_hash=row["file_hash"] or "",
     )
 
 
+def _resolve_link_targets(conn) -> None:
+    conn.execute(
+        """
+        UPDATE links
+        SET target_note_id = (
+            SELECT notes.id
+            FROM notes
+            WHERE notes.title = links.target_note_title
+            LIMIT 1
+        )
+        """
+    )
+
+
 def _hydrate_links(vault_root: Path, note: MemoryNote) -> MemoryNote:
     with connect(vault_root) as conn:
-        rows = conn.execute(
+        forward_rows = conn.execute(
             "SELECT target_note_title FROM links WHERE source_note_id = ? ORDER BY id",
             (note.id,),
         ).fetchall()
-    note.links = [row["target_note_title"] for row in rows]
+        backlink_rows = conn.execute(
+            """
+            SELECT notes.title
+            FROM links
+            JOIN notes ON notes.id = links.source_note_id
+            WHERE links.target_note_id = ?
+            ORDER BY notes.title
+            """,
+            (note.id,),
+        ).fetchall()
+    note.links = list(dict.fromkeys(row["target_note_title"] for row in forward_rows))
+    note.backlinks = list(dict.fromkeys(row["title"] for row in backlink_rows))
     return note
 
 
-def upsert_note(vault_root: Path, note: MemoryNote) -> None:
+def upsert_note(vault_root: Path, note: MemoryNote, *, resolve_links: bool = True) -> None:
     with connect(vault_root) as conn:
         conn.execute(
             """
@@ -119,6 +145,8 @@ def upsert_note(vault_root: Path, note: MemoryNote) -> None:
                 """,
                 (note.id, link, link),
             )
+        if resolve_links:
+            _resolve_link_targets(conn)
         conn.execute("DELETE FROM notes_fts WHERE note_id = ?", (note.id,))
         conn.execute(
             "INSERT INTO notes_fts (note_id, title, content, tags) VALUES (?, ?, ?, ?)",
@@ -143,10 +171,12 @@ def scan_vault(vault_root: Path) -> ScanSummary:
         try:
             raw = path.read_text(encoding="utf-8")
             note = parse_markdown_note(raw, path.resolve())
-            upsert_note(vault_root, note)
+            upsert_note(vault_root, note, resolve_links=False)
             summary.indexed_notes += 1
         except Exception:
             summary.skipped_files += 1
+    with connect(vault_root) as conn:
+        _resolve_link_targets(conn)
     return summary
 
 
@@ -248,6 +278,7 @@ def delete_memory(vault_root: Path, memory_id: str) -> bool:
     if path.exists():
         path.unlink()
     with connect(vault_root) as conn:
+        conn.execute("UPDATE links SET target_note_id = NULL WHERE target_note_id = ?", (memory_id,))
         conn.execute("DELETE FROM notes WHERE id = ?", (memory_id,))
         conn.execute("DELETE FROM notes_fts WHERE note_id = ?", (memory_id,))
     return True

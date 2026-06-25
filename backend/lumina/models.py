@@ -27,6 +27,7 @@ class MemoryNote(BaseModel):
     created: str = Field(default_factory=lambda: date.today().isoformat())
     updated: str = Field(default_factory=lambda: date.today().isoformat())
     links: list[str] = Field(default_factory=list)
+    backlinks: list[str] = Field(default_factory=list)
     path: str = ""
     file_hash: str = ""
 
@@ -133,6 +134,7 @@ class MemorySuggestion(BaseModel):
     importance: int = Field(default=3, ge=1, le=5)
     confidence: float = Field(default=0.8, ge=0, le=1)
     target_note_id: str | None = None
+    links: list[str] = Field(default_factory=list)
     reason: str = ""
     status: SuggestionStatus = "pending"
     created_at: str = ""
@@ -150,6 +152,10 @@ class ChatResponse(BaseModel):
 class GenerateSuggestionsRequest(BaseModel):
     conversation_id: str | None = None
     chat_model_id: str | None = None
+
+
+class SuggestionLinksUpdate(BaseModel):
+    links: list[str] = Field(default_factory=list)
 
 
 class SelectVaultRequest(BaseModel):

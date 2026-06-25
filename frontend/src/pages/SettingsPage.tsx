@@ -31,6 +31,8 @@ const emptySettings: AppSettings = {
   ],
   chat_model_id: "deepseek_chat",
   embedding_model_id: "local_hash_embedding",
+  retrieval_min_similarity: 0.35,
+  retrieval_candidate_limit: 40,
   chat_context_window_tokens: null,
   chat_max_output_tokens: 8192,
 };
@@ -134,6 +136,14 @@ export function SettingsPage({
 
   function updateMaxOutputTokens(event: ChangeEvent<HTMLInputElement>) {
     update("chat_max_output_tokens", Number(event.target.value));
+  }
+
+  function updateRetrievalMinSimilarity(event: ChangeEvent<HTMLInputElement>) {
+    update("retrieval_min_similarity", Number(event.target.value));
+  }
+
+  function updateRetrievalCandidateLimit(event: ChangeEvent<HTMLInputElement>) {
+    update("retrieval_candidate_limit", Number(event.target.value));
   }
 
   function updateConfiguredModel(id: string, changes: Partial<ConfiguredModel>) {
@@ -448,6 +458,30 @@ export function SettingsPage({
                 options={embeddingModels.map((model) => ({ value: model.id, label: model.name }))}
               />
               {renderAssignedModelCard(selectedEmbedding, t("settings.memorySearchModel"))}
+              <div className="retrieval-settings-grid">
+                <label>
+                  {t("settings.retrievalMinSimilarity")}
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={form.retrieval_min_similarity}
+                    onChange={updateRetrievalMinSimilarity}
+                  />
+                </label>
+                <label>
+                  {t("settings.retrievalCandidateLimit")}
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    step={1}
+                    value={form.retrieval_candidate_limit}
+                    onChange={updateRetrievalCandidateLimit}
+                  />
+                </label>
+              </div>
             </section>
 
             <details className="model-settings-section model-advanced-section">

@@ -10,7 +10,8 @@ from .conversations import load_messages
 from .db import connect
 from .indexer import rebuild_index
 from .llm import generate_memory_suggestion_drafts
-from .memory.store import create_memory, get_memory, update_memory
+from .memory.markdown import normalize_link
+from .memory.store import create_memory, get_memory, list_memories, update_memory
 from .models import MemorySuggestion
 from .retrieval import retrieve_memories
 
@@ -27,6 +28,7 @@ def _row_to_suggestion(row) -> MemorySuggestion:
         importance=row["importance"] or 3,
         confidence=row["confidence"] or 0.8,
         target_note_id=row["target_note_id"],
+        links=json.loads(row["links"] or "[]"),
         reason=row["reason"] or "",
         status=row["status"] or "pending",
         created_at=row["created_at"] or "",
@@ -47,6 +49,7 @@ def create_suggestion(
     confidence: float = 0.8,
     reason: str = "",
     target_note_id: str | None = None,
+    links: list[str] | None = None,
 ) -> MemorySuggestion:
     now = datetime.now().isoformat(timespec="seconds")
     suggestion_id = f"sug_{uuid4().hex[:12]}"
@@ -55,9 +58,9 @@ def create_suggestion(
             """
             INSERT INTO memory_suggestions (
                 id, conversation_id, action, title, content, type, tags, importance,
-                confidence, target_note_id, reason, status, created_at, updated_at
+                confidence, target_note_id, links, reason, status, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """,
             (
                 suggestion_id,
@@ -70,6 +73,7 @@ def create_suggestion(
                 importance,
                 confidence,
                 target_note_id,
+                json.dumps(links or [], ensure_ascii=False),
                 reason,
                 now,
                 now,
@@ -91,12 +95,31 @@ def _fallback_draft(messages: list[dict]) -> dict:
         "importance": 3,
         "confidence": 0.8,
         "target_note_id": None,
+        "links": [],
         "reason": "对话中包含可能影响后续回答的项目上下文，需由用户审查确认。",
     }
 
 
 def _suggestion_query(messages: list[dict]) -> str:
     return "\n".join(message["content"] for message in messages[-6:])
+
+
+def _sanitize_links(
+    links: list[str] | None,
+    *,
+    valid_titles: set[str],
+    self_title: str | None = None,
+    limit: int | None = 5,
+) -> list[str]:
+    cleaned: list[str] = []
+    for raw_link in links or []:
+        link = normalize_link(str(raw_link))
+        if not link or link == self_title or link not in valid_titles or link in cleaned:
+            continue
+        cleaned.append(link)
+        if limit is not None and len(cleaned) >= limit:
+            break
+    return cleaned
 
 
 def _find_existing_pending(
@@ -171,6 +194,9 @@ def generate_suggestions(
     if not drafts:
         drafts = [_fallback_draft(useful)]
 
+    active_memories = [memory for memory in list_memories(vault_root) if memory.status == "active"]
+    valid_titles = {memory.title for memory in active_memories}
+    memories_by_id = {memory.id: memory for memory in active_memories}
     suggestions: list[MemorySuggestion] = []
     for draft in drafts:
         if draft["action"] == "ignore":
@@ -185,6 +211,14 @@ def generate_suggestions(
         if existing is not None:
             suggestions.append(existing)
             continue
+        draft_links = _sanitize_links(
+            draft.get("links"),
+            valid_titles=valid_titles,
+            self_title=draft["title"],
+        )
+        if draft["action"] == "update" and draft["target_note_id"] in memories_by_id:
+            current_links = memories_by_id[draft["target_note_id"]].links
+            draft_links = list(dict.fromkeys([*current_links, *draft_links]))
         created = create_suggestion(
             vault_root,
             conversation_id=conversation_id,
@@ -197,6 +231,7 @@ def generate_suggestions(
             confidence=draft["confidence"],
             reason=draft["reason"],
             target_note_id=draft["target_note_id"],
+            links=draft_links,
         )
         suggestions.append(_apply_review_mode(vault_root, created, settings))
     return suggestions
@@ -222,6 +257,33 @@ def update_suggestion_status(vault_root: Path, suggestion_id: str, status: str) 
         conn.execute(
             "UPDATE memory_suggestions SET status = ?, updated_at = ? WHERE id = ?",
             (status, now, suggestion_id),
+        )
+    return get_suggestion(vault_root, suggestion_id)
+
+
+def update_suggestion_links(
+    vault_root: Path,
+    suggestion_id: str,
+    links: list[str],
+) -> MemorySuggestion:
+    suggestion = get_suggestion(vault_root, suggestion_id)
+    if suggestion.status != "pending":
+        raise ValueError("Only pending suggestions can be edited")
+    valid_titles = {
+        memory.title
+        for memory in list_memories(vault_root)
+        if memory.status == "active"
+    }
+    cleaned = _sanitize_links(
+        links,
+        valid_titles=valid_titles,
+        self_title=suggestion.title,
+    )
+    now = datetime.now().isoformat(timespec="seconds")
+    with connect(vault_root) as conn:
+        conn.execute(
+            "UPDATE memory_suggestions SET links = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(cleaned, ensure_ascii=False), now, suggestion_id),
         )
     return get_suggestion(vault_root, suggestion_id)
 
@@ -279,6 +341,7 @@ def accept_suggestion(
                 importance=suggestion.importance,
                 confidence=suggestion.confidence,
                 source="chat",
+                links=suggestion.links,
             )
             memory_persisted = True
             should_rebuild = True
@@ -296,7 +359,7 @@ def accept_suggestion(
                     confidence=suggestion.confidence,
                     source="chat",
                     status=current.status,
-                    links=current.links,
+                    links=list(dict.fromkeys([*current.links, *suggestion.links])),
                 )
                 memory_persisted = True
                 should_rebuild = True

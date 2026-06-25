@@ -23,6 +23,7 @@ const sampleMemory: api.MemoryNote = {
   created: "2026-05-23",
   updated: "2026-05-23",
   links: ["白盒化记忆系统"],
+  backlinks: ["Incoming memory"],
   path: "Memories/Projects/luminamind.md",
 };
 
@@ -44,6 +45,8 @@ vi.mock("../services/api", () => ({
     ],
     chat_model_id: "deepseek-chat",
     embedding_model_id: "local-embedding",
+    retrieval_min_similarity: 0.35,
+    retrieval_candidate_limit: 40,
     review_mode: "manual",
     chat_context_window_tokens: null,
     chat_max_output_tokens: 8192,
@@ -133,6 +136,7 @@ vi.mock("../services/api", () => ({
         importance: 4,
         confidence: 0.8,
         target_note_id: null,
+        links: [],
         reason: "对后续回答有帮助",
         status: "pending",
       },
@@ -153,6 +157,7 @@ vi.mock("../services/api", () => ({
         importance: 4,
         confidence: 0.8,
         target_note_id: null,
+        links: ["LuminaMind route"],
         reason: "对未来回答有帮助",
         status: "pending",
       },
@@ -160,6 +165,7 @@ vi.mock("../services/api", () => ({
   })),
   acceptSuggestion: vi.fn(async (id: string) => ({ id, status: "accepted" })),
   rejectSuggestion: vi.fn(async (id: string) => ({ id, status: "rejected" })),
+  patchSuggestionLinks: vi.fn(async (id: string, links: string[]) => ({ id, links, status: "pending" })),
 }));
 
 describe("LuminaMind MVP frontend", () => {
@@ -228,6 +234,25 @@ describe("LuminaMind MVP frontend", () => {
     );
     await waitFor(() => expect(api.updateIndexDeduped).toHaveBeenCalled());
     expect(await screen.findByText(/Index rebuilt/)).toBeInTheDocument();
+  });
+
+  it("saves vector retrieval thresholds without rebuilding the embedding index", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Models" }));
+    fireEvent.change(screen.getByLabelText("API key for DeepSeek Chat"), { target: { value: "deepseek-key" } });
+    fireEvent.change(screen.getByLabelText("Minimum vector similarity"), { target: { value: "0.42" } });
+    fireEvent.change(screen.getByLabelText("Vector candidate limit"), { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(api.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retrieval_min_similarity: 0.42,
+        retrieval_candidate_limit: 25,
+      }),
+    ));
+    expect(api.updateIndexDeduped).not.toHaveBeenCalled();
   });
 
   it("blocks saving a selected cloud model without its model API key", async () => {
@@ -613,6 +638,24 @@ describe("LuminaMind MVP frontend", () => {
       links: sampleMemory.links,
     }));
     expect(await screen.findByRole("heading", { level: 2, name: "Edited title" })).toBeInTheDocument();
+  });
+
+  it("shows forward and reverse links and lets users edit forward links", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    expect(await screen.findByText("Incoming memory")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit memory" }));
+    expect(screen.getByLabelText("Memory links")).toHaveValue(sampleMemory.links.join(", "));
+    fireEvent.change(screen.getByLabelText("Memory links"), {
+      target: { value: "Existing target, [[Second target]], Existing target" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    await waitFor(() => expect(api.updateMemory).toHaveBeenCalledWith(
+      "mem_1",
+      expect.objectContaining({ links: ["Existing target", "Second target"] }),
+    ));
   });
 
   it("cancels memory editing without saving changes", async () => {
@@ -1164,6 +1207,21 @@ describe("LuminaMind MVP frontend", () => {
 
     expect(await screen.findByText("accepted")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept 已自动记录" })).toBeDisabled();
+  });
+
+  it("edits links on a pending suggestion before acceptance", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review, 1 pending" }));
+    const linksInput = await screen.findByLabelText("Suggested links");
+    expect(linksInput).toHaveValue("LuminaMind route");
+    fireEvent.change(linksInput, { target: { value: "Existing target, Second target" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save suggested links" }));
+
+    await waitFor(() => expect(api.patchSuggestionLinks).toHaveBeenCalledWith(
+      "sug_1",
+      ["Existing target", "Second target"],
+    ));
   });
 
   it("filters review records by status and shows the selected detail panel", async () => {

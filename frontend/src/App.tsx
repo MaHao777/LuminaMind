@@ -2,6 +2,7 @@ import { BookOpenText, CheckCheck, MessageSquareText, PanelLeftClose, PanelLeftO
 import { CSSProperties, useCallback, useEffect, useState } from "react";
 
 import { AppTitlebar } from "./components/AppTitlebar";
+import { IndexActivityToast } from "./components/IndexActivityToast";
 import { ResizableSplitter } from "./components/ResizableSplitter";
 import { I18nProvider, useI18n, type LanguageId } from "./i18n";
 import { ChatPage } from "./pages/ChatPage";
@@ -235,6 +236,7 @@ function AppShell({ language, onLanguageChange }: AppShellProps) {
           />
         ) : null}
       </main>
+      <IndexActivityToast />
     </div>
   );
 }

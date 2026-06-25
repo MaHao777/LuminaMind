@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
+import time
 
+import httpx
 import pytest
 
 from lumina.config import AppSettings, ConfiguredModel
 from lumina.embedding import OpenRouterEmbeddingProvider
+from lumina.db import db_path, initialize_database
 from lumina.indexer import index_status, rebuild_index
 from lumina.llm import _call_deepseek, _call_ollama, _call_openrouter, build_rag_prompt, generate_memory_suggestion_drafts
 from lumina.memory.markdown import build_markdown, parse_markdown_note
@@ -131,7 +134,8 @@ def test_retrieve_memories_fuses_keyword_link_importance_and_vector_scores(tmp_p
         importance=1,
     )
     scan_vault(vault.root)
-    rebuild_index(vault.root, embedding_provider=None)
+    settings = AppSettings(retrieval_min_similarity=0.0)
+    rebuild_index(vault.root, embedding_provider=None, settings=settings)
 
     results = retrieve_memories(
         vault.root,
@@ -139,6 +143,7 @@ def test_retrieve_memories_fuses_keyword_link_importance_and_vector_scores(tmp_p
         top_k=3,
         include_graph_expand=True,
         embedding_provider=None,
+        settings=settings,
     )
 
     assert results
@@ -399,6 +404,85 @@ def test_openrouter_chat_and_embedding_requests_use_selected_models(monkeypatch)
     assert vectors == [[0.1, 0.2], [0.3, 0.4]]
 
 
+def test_openrouter_embedding_batches_large_inputs(monkeypatch) -> None:
+    requests: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, **kwargs) -> httpx.Response:
+            inputs = kwargs["json"]["input"]
+            requests.append(inputs)
+            return httpx.Response(
+                200,
+                json={"data": [{"embedding": [float(index)]} for index, _ in enumerate(inputs)]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr("lumina.embedding.httpx.Client", FakeClient)
+    texts = [f"text-{index}" for index in range(17)]
+
+    vectors = OpenRouterEmbeddingProvider(
+        "https://openrouter.ai/api/v1",
+        "router-key",
+        "qwen/qwen3-embedding-8b",
+    ).embed(texts)
+
+    assert [len(batch) for batch in requests] == [16, 1]
+    assert len(vectors) == len(texts)
+
+
+def test_openrouter_embedding_retries_transient_response(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, **kwargs) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(
+                    429,
+                    headers={"Retry-After": "0"},
+                    json={"error": {"message": "Rate limit exceeded"}},
+                    request=httpx.Request("POST", url),
+                )
+            return httpx.Response(
+                200,
+                json={"data": [{"embedding": [0.1, 0.2]}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr("lumina.embedding.httpx.Client", FakeClient)
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+
+    vectors = OpenRouterEmbeddingProvider(
+        "https://openrouter.ai/api/v1",
+        "router-key",
+        "qwen/qwen3-embedding-8b",
+    ).embed(["retry me"])
+
+    assert vectors == [[0.1, 0.2]]
+    assert attempts == 2
+    assert sleeps == [0.0]
+
+
 def test_memory_extraction_uses_chat_assignment_instead_of_embedding_assignment(monkeypatch) -> None:
     selected_models: list[str] = []
     settings = AppSettings(
@@ -470,6 +554,25 @@ def test_embedding_signature_marks_changed_binding_stale_and_failed_rebuild_pres
     assert vector_path.read_text(encoding="utf-8") == published_payload
 
 
+def test_rebuild_embeds_chunks_across_notes_in_one_provider_call(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "batched-index-vault")
+    create_memory(vault.root, title="First note", content="A" * 1_100, note_type="project")
+    create_memory(vault.root, title="Second note", content="B" * 1_100, note_type="project")
+    scan_vault(vault.root)
+    calls: list[list[str]] = []
+
+    class RecordingProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            calls.append(texts)
+            return [[float(index), 1.0] for index in range(len(texts))]
+
+    summary = rebuild_index(vault.root, embedding_provider=RecordingProvider(), settings=AppSettings())
+
+    assert summary.indexed_chunks == 4
+    assert len(calls) == 1
+    assert len(calls[0]) == 4
+
+
 def test_remote_query_embedding_failure_falls_back_to_nonsemantic_retrieval(tmp_path: Path) -> None:
     vault = initialize_vault(tmp_path / "query-fallback-vault")
     create_memory(vault.root, title="Keyword target", content="The project uses aurora indexing.", note_type="project")
@@ -489,3 +592,248 @@ def test_remote_query_embedding_failure_falls_back_to_nonsemantic_retrieval(tmp_
     )
 
     assert results[0].title == "Keyword target"
+
+
+def test_retrieval_settings_have_safe_defaults_and_validate_bounds() -> None:
+    settings = AppSettings()
+
+    assert settings.retrieval_min_similarity == 0.35
+    assert settings.retrieval_candidate_limit == 40
+
+    with pytest.raises(ValueError):
+        AppSettings(retrieval_min_similarity=1.01)
+    with pytest.raises(ValueError):
+        AppSettings(retrieval_candidate_limit=0)
+
+
+def test_rebuild_publishes_cosine_chroma_metadata_matching_json_index(tmp_path: Path) -> None:
+    chromadb = pytest.importorskip("chromadb")
+    vault = initialize_vault(tmp_path / "chroma-metadata-vault")
+    create_memory(vault.root, title="Indexed note", content="semantic content", note_type="concept")
+    scan_vault(vault.root)
+    settings = AppSettings()
+
+    class StableProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+    rebuild_index(vault.root, embedding_provider=StableProvider(), settings=settings)
+
+    payload = json.loads(
+        (vault.root / ".agent" / "vector_index" / "fallback_vectors.json").read_text(encoding="utf-8")
+    )
+    collection = chromadb.PersistentClient(
+        path=str(vault.root / ".agent" / "vector_index" / "chroma")
+    ).get_collection("memories")
+
+    assert collection.metadata["hnsw:space"] == "cosine"
+    assert collection.metadata["embedding_signature"] == payload["embedding_signature"]
+    assert collection.metadata["vector_count"] == len(payload["vectors"])
+    assert collection.count() == len(payload["vectors"])
+
+
+def test_retrieval_uses_vector_seeds_and_bidirectional_one_hop_neighbors_only(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "candidate-vault")
+    root = create_memory(
+        vault.root,
+        title="Vector root",
+        content="root semantic content",
+        note_type="concept",
+        links=["Linked neighbor"],
+    )
+    create_memory(
+        vault.root,
+        title="Linked neighbor",
+        content="graph-only content",
+        note_type="concept",
+    )
+    create_memory(
+        vault.root,
+        title="Unrelated note",
+        content="unrelated content",
+        note_type="concept",
+        importance=5,
+    )
+    scan_vault(vault.root)
+    settings = AppSettings(retrieval_min_similarity=0.8, retrieval_candidate_limit=1)
+
+    class CandidateProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            vectors = []
+            for text in texts:
+                if text == "find vector root" or "Vector root" in text:
+                    vectors.append([1.0, 0.0])
+                else:
+                    vectors.append([0.0, 1.0])
+            return vectors
+
+    provider = CandidateProvider()
+    rebuild_index(vault.root, embedding_provider=provider, settings=settings)
+
+    results = retrieve_memories(
+        vault.root,
+        query="find vector root",
+        top_k=10,
+        embedding_provider=provider,
+        settings=settings,
+    )
+
+    assert [result.title for result in results] == ["Vector root", "Linked neighbor"]
+    assert results[0].memory_id == root.id
+    assert "双链关联" in results[1].reason
+
+
+def test_link_signal_outranks_keyword_signal_when_other_scores_match(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "link-weight-vault")
+    create_memory(
+        vault.root,
+        title="Root seed",
+        content="root seed",
+        note_type="concept",
+        links=["Graph candidate"],
+    )
+    create_memory(
+        vault.root,
+        title="Graph candidate",
+        content="graph candidate",
+        note_type="concept",
+    )
+    create_memory(
+        vault.root,
+        title="Keyword candidate",
+        content="question",
+        note_type="concept",
+    )
+    scan_vault(vault.root)
+    settings = AppSettings(retrieval_min_similarity=0.35, retrieval_candidate_limit=3)
+
+    class RankingProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            vectors = []
+            for text in texts:
+                if text == "question" or "Root seed" in text:
+                    vectors.append([1.0, 0.0])
+                elif "Graph candidate" in text:
+                    vectors.append([0.45, 0.8930285549745876])
+                elif "Keyword candidate" in text:
+                    vectors.append([0.4, 0.916515138991168])
+                else:
+                    vectors.append([0.0, 1.0])
+            return vectors
+
+    provider = RankingProvider()
+    rebuild_index(vault.root, embedding_provider=provider, settings=settings)
+
+    results = retrieve_memories(
+        vault.root,
+        query="question",
+        top_k=10,
+        embedding_provider=provider,
+        settings=settings,
+    )
+    titles = [result.title for result in results]
+
+    assert titles.index("Graph candidate") < titles.index("Keyword candidate")
+
+
+def test_valid_vector_index_with_no_threshold_matches_returns_no_memories(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "empty-vector-candidate-vault")
+    create_memory(vault.root, title="Far note", content="orthogonal", note_type="concept")
+    scan_vault(vault.root)
+    settings = AppSettings(retrieval_min_similarity=0.8)
+
+    class OrthogonalProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] if text == "query" else [0.0, 1.0] for text in texts]
+
+    provider = OrthogonalProvider()
+    rebuild_index(vault.root, embedding_provider=provider, settings=settings)
+
+    assert retrieve_memories(
+        vault.root,
+        query="query",
+        embedding_provider=provider,
+        settings=settings,
+    ) == []
+
+
+def test_retrieval_falls_back_to_json_when_chroma_collection_is_missing(tmp_path: Path) -> None:
+    chromadb = pytest.importorskip("chromadb")
+    vault = initialize_vault(tmp_path / "json-fallback-vault")
+    create_memory(vault.root, title="Fallback target", content="target", note_type="concept")
+    scan_vault(vault.root)
+    settings = AppSettings(retrieval_min_similarity=0.8)
+
+    class StableProvider:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+    provider = StableProvider()
+    rebuild_index(vault.root, embedding_provider=provider, settings=settings)
+    client = chromadb.PersistentClient(path=str(vault.root / ".agent" / "vector_index" / "chroma"))
+    client.delete_collection("memories")
+
+    results = retrieve_memories(
+        vault.root,
+        query="target",
+        embedding_provider=provider,
+        settings=settings,
+    )
+
+    assert results[0].title == "Fallback target"
+
+
+def test_scan_resolves_forward_links_and_derives_backlinks_after_all_notes_are_loaded(tmp_path: Path) -> None:
+    vault = initialize_vault(tmp_path / "backlink-vault")
+    source_path = vault.root / "Memories" / "Concepts" / "a-source.md"
+    target_path = vault.root / "Memories" / "Concepts" / "z-target.md"
+    source_path.write_text(
+        build_markdown(title="Source note", content="Source", links=["Target note"]),
+        encoding="utf-8",
+    )
+    target_path.write_text(
+        build_markdown(title="Target note", content="Target"),
+        encoding="utf-8",
+    )
+
+    scan_vault(vault.root)
+    memories = {memory.title: memory for memory in list_memories(vault.root)}
+
+    assert memories["Source note"].links == ["Target note"]
+    assert memories["Source note"].backlinks == []
+    assert memories["Target note"].backlinks == ["Source note"]
+
+
+def test_initialize_database_adds_links_column_to_legacy_suggestions_table(tmp_path: Path) -> None:
+    vault_root = tmp_path / "legacy-suggestion-vault"
+    database_path = db_path(vault_root)
+    database_path.parent.mkdir(parents=True)
+    import sqlite3
+
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE memory_suggestions (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                action TEXT NOT NULL,
+                title TEXT,
+                content TEXT NOT NULL,
+                type TEXT DEFAULT 'log',
+                tags TEXT,
+                importance INTEGER DEFAULT 3,
+                confidence REAL DEFAULT 0.8,
+                target_note_id TEXT,
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+    initialize_database(vault_root)
+
+    with sqlite3.connect(database_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_suggestions)")}
+    assert "links" in columns

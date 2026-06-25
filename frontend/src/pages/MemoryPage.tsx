@@ -36,6 +36,7 @@ type MemoryDraft = {
   title: string;
   type: MemoryType;
   tags: string;
+  links: string;
   content: string;
 };
 type MemoryMenu = {
@@ -60,6 +61,7 @@ function emptyDraft(): MemoryDraft {
     title: "",
     type: "concept",
     tags: "",
+    links: "",
     content: "",
   };
 }
@@ -69,6 +71,7 @@ function memoryDraft(memory: MemoryNote): MemoryDraft {
     title: memory.title,
     type: memory.type,
     tags: memory.tags.join(", "),
+    links: memory.links.join(", "),
     content: memory.content,
   };
 }
@@ -78,6 +81,7 @@ function draftsMatch(left: MemoryDraft, right: MemoryDraft) {
     left.title === right.title
     && left.type === right.type
     && left.tags === right.tags
+    && left.links === right.links
     && left.content === right.content
   );
 }
@@ -87,6 +91,15 @@ function normalizeTags(value: string) {
     value
       .split(/[,，]/)
       .map((tag) => tag.trim())
+      .filter(Boolean),
+  ));
+}
+
+function normalizeLinks(value: string) {
+  return Array.from(new Set(
+    value
+      .split(/[,，\n]/)
+      .map((link) => link.trim().replace(/^\[\[/, "").replace(/\]\]$/, "").split("|", 1)[0].trim())
       .filter(Boolean),
   ));
 }
@@ -183,6 +196,8 @@ export function MemoryPage({ onDirtyChange }: Props) {
         memory.path,
         memory.content,
         memory.tags.join(" "),
+        memory.links.join(" "),
+        (memory.backlinks ?? []).join(" "),
       ].join("\n").toLocaleLowerCase().includes(normalizedQuery);
     });
   }, [memories, query, typeFilter]);
@@ -276,7 +291,7 @@ export function MemoryPage({ onDirtyChange }: Props) {
       confidence: editorSource?.confidence ?? 0.9,
       source: editorSource?.source ?? "manual",
       status: editorSource?.status ?? "active",
-      links: editorSource?.links ?? [],
+      links: normalizeLinks(draft.links),
     };
 
     saveInFlight.current = true;
@@ -556,6 +571,15 @@ export function MemoryPage({ onDirtyChange }: Props) {
                   onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))}
                 />
               </label>
+              <label>
+                <span>{t("memory.links")}</span>
+                <input
+                  aria-label={t("memory.links")}
+                  value={draft.links}
+                  placeholder={t("memory.linksPlaceholder")}
+                  onChange={(event) => setDraft((current) => ({ ...current, links: event.target.value }))}
+                />
+              </label>
               <label className="memory-content-field">
                 <span>{t("memory.content")}</span>
                 <textarea
@@ -580,6 +604,24 @@ export function MemoryPage({ onDirtyChange }: Props) {
             </div>
             <div className="tag-row">
               {selected.tags.map((tag) => <span key={tag}>{tag}</span>)}
+            </div>
+            <div className="memory-relations">
+              <section>
+                <strong>{t("memory.forwardLinks")}</strong>
+                <div className="tag-row">
+                  {selected.links.length > 0
+                    ? selected.links.map((link) => <span key={link}>{link}</span>)
+                    : <span>{t("common.none")}</span>}
+                </div>
+              </section>
+              <section>
+                <strong>{t("memory.backlinks")}</strong>
+                <div className="tag-row">
+                  {(selected.backlinks ?? []).length > 0
+                    ? selected.backlinks?.map((link) => <span key={link}>{link}</span>)
+                    : <span>{t("common.none")}</span>}
+                </div>
+              </section>
             </div>
             <MarkdownContent>{selected.content}</MarkdownContent>
           </>

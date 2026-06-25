@@ -1,10 +1,15 @@
-import { Check, X } from "lucide-react";
+import { Check, Save, X } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
 import { ResizableSplitter } from "../components/ResizableSplitter";
 import { useI18n } from "../i18n";
-import { acceptSuggestion, rejectSuggestion, type MemorySuggestion } from "../services/api";
+import {
+  acceptSuggestion,
+  patchSuggestionLinks,
+  rejectSuggestion,
+  type MemorySuggestion,
+} from "../services/api";
 import { loadLayoutNumber, saveLayoutNumber } from "../services/uiPreferences";
 
 type Props = {
@@ -20,6 +25,15 @@ const REVIEW_LEFT_WIDTH = {
   max: 520,
 };
 
+function normalizeLinks(value: string) {
+  return Array.from(new Set(
+    value
+      .split(/[,，\n]/)
+      .map((link) => link.trim().replace(/^\[\[/, "").replace(/\]\]$/, "").split("|", 1)[0].trim())
+      .filter(Boolean),
+  ));
+}
+
 export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
   const { t } = useI18n();
   const [processingIds, setProcessingIds] = useState<Set<string>>(() => new Set());
@@ -27,6 +41,8 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<ReviewFilter>("all");
   const [selectedId, setSelectedId] = useState("");
+  const [linkDraft, setLinkDraft] = useState("");
+  const [savingLinks, setSavingLinks] = useState(false);
   const [reviewLeftWidth, setReviewLeftWidth] = useState(() =>
     loadLayoutNumber("reviewLeftWidth", REVIEW_LEFT_WIDTH.default, REVIEW_LEFT_WIDTH.min, REVIEW_LEFT_WIDTH.max),
   );
@@ -50,6 +66,10 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
     );
   }, [visibleSuggestions]);
 
+  useEffect(() => {
+    setLinkDraft((selected?.links ?? []).join(", "));
+  }, [selected?.id, selected?.links]);
+
   async function processSuggestion(
     id: string,
     request: (suggestionId: string) => Promise<MemorySuggestion>,
@@ -72,6 +92,21 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
   function resizeReviewLeft(width: number) {
     setReviewLeftWidth(width);
     saveLayoutNumber("reviewLeftWidth", width, REVIEW_LEFT_WIDTH.min, REVIEW_LEFT_WIDTH.max);
+  }
+
+  async function saveSuggestionLinks() {
+    if (!selected || selected.status !== "pending" || savingLinks) return;
+    setSavingLinks(true);
+    setError("");
+    try {
+      const updated = await patchSuggestionLinks(selected.id, normalizeLinks(linkDraft));
+      setLinkDraft((updated.links ?? []).join(", "));
+      await onSuggestionsChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("review.failedSaveLinks"));
+    } finally {
+      setSavingLinks(false);
+    }
   }
 
   const gridStyle = {
@@ -168,6 +203,38 @@ export function ReviewPage({ suggestions, onSuggestionsChanged }: Props) {
             </div>
             <div className="tag-row">
               {selected.tags.map((tag) => <span key={tag}>{tag}</span>)}
+            </div>
+            <div className="suggestion-links">
+              <strong>{t("review.links")}</strong>
+              {selected.status === "pending" ? (
+                <div className="suggestion-links-editor">
+                  <label>
+                    <span>{t("review.suggestedLinks")}</span>
+                    <input
+                      aria-label={t("review.suggestedLinks")}
+                      value={linkDraft}
+                      placeholder={t("review.linksPlaceholder")}
+                      onChange={(event) => setLinkDraft(event.target.value)}
+                      disabled={savingLinks || processingIds.has(selected.id)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="icon-text-button"
+                    onClick={() => void saveSuggestionLinks()}
+                    disabled={savingLinks || processingIds.has(selected.id)}
+                  >
+                    <Save size={15} aria-hidden />
+                    {savingLinks ? t("review.savingLinks") : t("review.saveLinks")}
+                  </button>
+                </div>
+              ) : (
+                <div className="tag-row">
+                  {(selected.links ?? []).length > 0
+                    ? selected.links?.map((link) => <span key={link}>{link}</span>)
+                    : <span>{t("common.none")}</span>}
+                </div>
+              )}
             </div>
             <MarkdownContent className="suggestion-content">{selected.content}</MarkdownContent>
             <MarkdownContent className="suggestion-reason">{selected.reason}</MarkdownContent>

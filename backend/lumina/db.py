@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS memory_suggestions (
     importance INTEGER DEFAULT 3,
     confidence REAL DEFAULT 0.8,
     target_note_id TEXT,
+    links TEXT NOT NULL DEFAULT '[]',
     reason TEXT,
     status TEXT DEFAULT 'pending',
     created_at TEXT,
@@ -165,5 +166,10 @@ def initialize_database(vault_root: Path) -> None:
         }
         if "pinned" not in conversation_columns:
             conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        suggestion_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(memory_suggestions)").fetchall()
+        }
+        if "links" not in suggestion_columns:
+            conn.execute("ALTER TABLE memory_suggestions ADD COLUMN links TEXT NOT NULL DEFAULT '[]'")
         _backfill_default_conversation_titles(conn)
         _prune_disposable_conversation_drafts(conn)
