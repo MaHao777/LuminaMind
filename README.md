@@ -157,7 +157,7 @@ cd D:\VS_project\LuminaMind\frontend
 npm run dist:win
 
 # 构建完成后运行 release 目录里的安装包
-.\release\LuminaMind-0.1.0-Setup.exe
+.\release\LuminaMind-0.1.1-Setup.exe
 ```
 
 版本号来自 `frontend/package.json`。如果版本号改了，安装包文件名也会跟着变。
